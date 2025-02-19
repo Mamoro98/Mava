@@ -97,6 +97,10 @@ class Encoder(nn.Module):
                     self.net_config.embed_dim, kernel_init=orthogonal(jnp.sqrt(2)), use_bias=False
                 ),
                 nn.gelu,
+                nn.Dense(
+                    self.net_config.embed_dim, kernel_init=orthogonal(jnp.sqrt(2)), use_bias=False
+                ),
+                nn.gelu,
             ],
         )
         self.head = nn.Sequential(
@@ -276,6 +280,9 @@ class Decoder(nn.Module):
 
         self.head = nn.Sequential(
             [
+                nn.Dense(self.net_config.embed_dim, kernel_init=orthogonal(jnp.sqrt(2))),
+                nn.gelu,
+                nn.RMSNorm(),
                 nn.Dense(self.net_config.embed_dim, kernel_init=orthogonal(jnp.sqrt(2))),
                 nn.gelu,
                 nn.RMSNorm(),
