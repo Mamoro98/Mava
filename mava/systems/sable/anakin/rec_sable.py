@@ -244,7 +244,7 @@ def get_learner_fn(
                 grads, loss_info = jax.lax.pmean((grads, loss_info), axis_name="device")
 
                 # Update params and optimiser state
-                updates, new_opt_state = update_fn(grads, opt_state)
+                updates, new_opt_state = update_fn(grads, opt_state,params)
                 new_params = optax.apply_updates(params, updates)
 
                 total_loss, (actor_loss, entropy, value_loss) = loss_info
@@ -390,7 +390,7 @@ def learner_setup(
     lr = make_learning_rate(config.system.actor_lr, config)
     optim = optax.chain(
         optax.clip_by_global_norm(config.system.max_grad_norm),
-        optax.adam(lr, eps=1e-5),
+        optax.adamw(lr, eps=1e-5),
     )
 
     # Get mock inputs to initialise network.

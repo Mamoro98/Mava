@@ -205,12 +205,12 @@ def get_learner_fn(
 
                 # Update params and optimiser state
                 actor_updates, actor_new_opt_state = actor_update_fn(
-                    actor_grads, opt_states.actor_opt_state
+                    actor_grads, opt_states.actor_opt_state, params.actor_params
                 )
                 actor_new_params = optax.apply_updates(params.actor_params, actor_updates)
 
                 critic_updates, critic_new_opt_state = critic_update_fn(
-                    critic_grads, opt_states.critic_opt_state
+                    critic_grads, opt_states.critic_opt_state, params.critic_params
                 )
                 critic_new_params = optax.apply_updates(params.critic_params, critic_updates)
 
@@ -320,11 +320,11 @@ def learner_setup(
 
     actor_optim = optax.chain(
         optax.clip_by_global_norm(config.system.max_grad_norm),
-        optax.adam(actor_lr, eps=1e-5),
+        optax.adamw(actor_lr, eps=1e-5),
     )
     critic_optim = optax.chain(
         optax.clip_by_global_norm(config.system.max_grad_norm),
-        optax.adam(critic_lr, eps=1e-5),
+        optax.adamw(critic_lr, eps=1e-5),
     )
 
     # Initialise observation with obs of all agents.
