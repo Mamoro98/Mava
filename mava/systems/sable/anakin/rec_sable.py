@@ -337,7 +337,9 @@ def get_learner_fn(
         batched_update_step = jax.vmap(_update_step, in_axes=(0, None), axis_name="batch")
 
         learner_state, (episode_info, loss_info) = jax.lax.scan(
-            batched_update_step, learner_state, None, config.system.num_updates_per_eval
+            batched_update_step, learner_state, None, 16
+
+            # batched_update_step, learner_state, None, config.system.num_updates_per_eval
         )
         return ExperimentOutput(
             learner_state=learner_state,
@@ -394,11 +396,11 @@ def learner_setup(
     )
 
     # Get mock inputs to initialise network.
+    
     init_obs = env.observation_spec.generate_value()
     init_obs = tree.map(lambda x: x[jnp.newaxis, ...], init_obs)  # Add batch dim
     init_hs = get_init_hidden_state(config.network.net_config, config.arch.num_envs)
     init_hs = tree.map(lambda x: x[0, jnp.newaxis], init_hs)
-
     # Initialise params and optimiser state.
     params = sable_network.init(
         net_key,
@@ -482,17 +484,46 @@ def run_experiment(_config: DictConfig) -> float:
     """Runs experiment."""
     _config.logger.system_name = "rec_sable"
     config = copy.deepcopy(_config)
+    print(config)
 
     n_devices = len(jax.devices())
+    # extract task names from the configs , copy the configs deeply and init seperate env and eval envs for each task 
+    envs = []
+    eval_envs = []
+    tasks_configs = []
+    tasks_names = config['env']['scenario']['task_names']
 
-    # Create the enviroments for train and eval.
-    env, eval_env = environments.make(config)
+    for task in tasks_names:
+        tasks_config = copy.deepcopy(config)
+        tasks_config['env']['scenario']['task_name'] = task
+        env, eval_env = environments.make(tasks_config)
+
+        envs.append(env)
+        eval_envs.append(eval_env)
+        tasks_configs.append(tasks_config)
+    
 
     # PRNG keys.
+    key, key_e = jax.random.split(jax.random.PRNGKey(config.system.seed), num=2)
+    task_keys = jax.random.split(key, num=len(envs))  # One key per task
+
+    learners = []
+    sable_execution_fns = []
+    learner_states = []
+
     key, key_e, net_key = jax.random.split(jax.random.PRNGKey(config.system.seed), num=3)
 
+    for i, (env, task_config) in enumerate(zip(envs, tasks_configs)):
+        learner, sable_execution_fn, learner_state = learner_setup(env, (task_keys[i], net_key), task_config)
+        learners.append(learner)
+        sable_execution_fns.append(sable_execution_fn)
+        learner_states.append(learner_state)
+
+
+
+
     # Setup learner.
-    learn, sable_execution_fn, learner_state = learner_setup(env, (key, net_key), config)
+    # learn, sable_execution_fn, learner_state = learner_setup(envs, (key, net_key), config)
 
     # Setup evaluator.
     def make_rec_sable_act_fn(actor_apply_fn: ActorApply) -> EvalActFn:
@@ -556,49 +587,50 @@ def run_experiment(_config: DictConfig) -> float:
     # Run experiment for a total number of evaluations.
     max_episode_return = -jnp.inf
     best_params = None
-    for eval_step in range(config.arch.num_evaluation):
-        # Train.
-        start_time = time.time()
+    for i in range(len(learners)):
+        for eval_step in range(config.arch.num_evaluation):
+            # Train.
+            start_time = time.time()
 
-        learner_output = learn(learner_state)
-        jax.block_until_ready(learner_output)
+            learner_output = learners[i](learner_state)
+            jax.block_until_ready(learner_output)
 
-        # Log the results of the training.
-        elapsed_time = time.time() - start_time
-        t = int(steps_per_rollout * (eval_step + 1))
-        episode_metrics, ep_completed = get_final_step_metrics(learner_output.episode_metrics)
-        episode_metrics["steps_per_second"] = steps_per_rollout / elapsed_time
+            # Log the results of the training.
+            elapsed_time = time.time() - start_time
+            t = int(steps_per_rollout * (eval_step + 1))
+            episode_metrics, ep_completed = get_final_step_metrics(learner_output.episode_metrics)
+            episode_metrics["steps_per_second"] = steps_per_rollout / elapsed_time
 
-        # Separately log timesteps, actoring metrics and training metrics.
-        logger.log({"timestep": t}, t, eval_step, LogEvent.MISC)
-        if ep_completed:  # only log episode metrics if an episode was completed in the rollout.
-            logger.log(episode_metrics, t, eval_step, LogEvent.ACT)
-        logger.log(learner_output.train_metrics, t, eval_step, LogEvent.TRAIN)
+            # Separately log timesteps, actoring metrics and training metrics.
+            logger.log({"timestep": t}, t, eval_step, LogEvent.MISC)
+            if ep_completed:  # only log episode metrics if an episode was completed in the rollout.
+                logger.log(episode_metrics, t, eval_step, LogEvent.ACT)
+            logger.log(learner_output.train_metrics, t, eval_step, LogEvent.TRAIN)
 
-        # Prepare for evaluation.
-        trained_params = unreplicate_batch_dim(learner_state.params)
-        key_e, *eval_keys = jax.random.split(key_e, n_devices + 1)
-        eval_keys = jnp.stack(eval_keys)
-        eval_keys = eval_keys.reshape(n_devices, -1)
-        # Evaluate.
-        eval_metrics = evaluator(trained_params, eval_keys, {"hidden_state": eval_hs})
-        logger.log(eval_metrics, t, eval_step, LogEvent.EVAL)
-        episode_return = jnp.mean(eval_metrics["episode_return"])
+            # Prepare for evaluation.
+            trained_params = unreplicate_batch_dim(learner_state.params)
+            key_e, *eval_keys = jax.random.split(key_e, n_devices + 1)
+            eval_keys = jnp.stack(eval_keys)
+            eval_keys = eval_keys.reshape(n_devices, -1)
+            # Evaluate.
+            eval_metrics = evaluator(trained_params, eval_keys, {"hidden_state": eval_hs})
+            logger.log(eval_metrics, t, eval_step, LogEvent.EVAL)
+            episode_return = jnp.mean(eval_metrics["episode_return"])
 
-        if save_checkpoint:
-            # Save checkpoint of learner state
-            checkpointer.save(
-                timestep=steps_per_rollout * (eval_step + 1),
-                unreplicated_learner_state=unreplicate_n_dims(learner_output.learner_state),
-                episode_return=episode_return,
-            )
+            if save_checkpoint:
+                # Save checkpoint of learner state
+                checkpointer.save(
+                    timestep=steps_per_rollout * (eval_step + 1),
+                    unreplicated_learner_state=unreplicate_n_dims(learner_output.learner_state),
+                    episode_return=episode_return,
+                )
 
-        if config.arch.absolute_metric and max_episode_return <= episode_return:
-            best_params = copy.deepcopy(trained_params)
-            max_episode_return = episode_return
+            if config.arch.absolute_metric and max_episode_return <= episode_return:
+                best_params = copy.deepcopy(trained_params)
+                max_episode_return = episode_return
 
-        # Update runner state to continue training.
-        learner_state = learner_output.learner_state
+            # Update runner state to continue training.
+            learner_state = learner_output.learner_state
 
     # Record the performance for the final evaluation run.
     eval_performance = float(jnp.mean(eval_metrics[config.env.eval_metric]))
