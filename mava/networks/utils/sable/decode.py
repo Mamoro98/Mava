@@ -87,7 +87,8 @@ def get_shifted_discrete_actions(
     action: chex.Array, legal_actions: chex.Array, n_agents: int
 ) -> chex.Array:
     """Get the shifted discrete action sequence for predicting the next action."""
-    B, S, A = legal_actions.shape
+    print(legal_actions.shape)
+    B, S, A= legal_actions.shape
 
     # Create a shifted action sequence for predicting the next action
     shifted_actions = jnp.zeros((B, S, A + 1))

@@ -23,6 +23,8 @@ import hydra
 import jax
 import jax.numpy as jnp
 import optax
+from optax import MultiSteps
+
 from colorama import Fore, Style
 from flax.core.frozen_dict import FrozenDict as Params
 from jax import tree
@@ -138,25 +140,33 @@ def get_learner_fn(
         traj_batches_list= []
         advantages_list = []
         targets_list = []
+        updated_hstates_list = []
+        env_states_list = []
+        timesteps_list = []
+
         for i in range(len(envs)):
             env_state_i = env_state_old[i]
             last_timestep_i = last_timestep_old[i]
             hstates_i = hstates_old[i]
             new_learner_state = LearnerState(params, opt_states, key, env_state_i, last_timestep_i, hstates_i)
+            # env is now global -> leads to jit silent error in the future when the env is different 
             env = envs[i]
-            learner_state, (traj_batch, episode_metrics) = jax.lax.scan(
+            new_learner_state, (traj_batch, episode_metrics) = jax.lax.scan(
                 _env_step, new_learner_state, length=config.system.rollout_length
-            )
+            ) 
 
             # Calculate advantage
-            params, opt_states, key, env_state, last_timestep, updated_hstates = learner_state
+            params_new, opt_states_new, key, env_state_new, last_timestep_new, updated_hstates_new = new_learner_state
+            env_states_list.append(env_state_new)
+            timesteps_list.append(last_timestep_new)
+            
             key, last_val_key = jax.random.split(key)
             _, _, last_val, _ = sable_action_select_fn(  # type: ignore
-                params, last_timestep.observation, updated_hstates, last_val_key
+                params_new, last_timestep_new.observation, updated_hstates_new, last_val_key
             )
             
-            # last_done = last_timestep.last().repeat(env.num_agents).reshape(num_envs, -1)
-            last_done = jax.vmap(lambda x: x.repeat(config.system.num_agents, axis=-1))(last_timestep.last())
+            # last_done = last_timestep_new.last().repeat(env.num_agents).reshape(num_envs, -1)
+            last_done = jax.vmap(lambda x: x.repeat(config.system.num_agents, axis=-1))(last_timestep_new.last())
             # print("heeeeeeeeer")
             def _calculate_gae(
                 traj_batch: Transition,
@@ -193,6 +203,7 @@ def get_learner_fn(
             advantages_list.append(advantages)
             targets_list.append(targets)
             traj_batches_list.append(traj_batch)
+            updated_hstates_list.append(updated_hstates_new)
             # num_tasks = learner_state.env_state.shape[0]
 
         def _update_epoch(update_state: Tuple, _: Any) -> Tuple:
@@ -271,6 +282,18 @@ def get_learner_fn(
                 grads, loss_info = jax.lax.pmean((grads, loss_info), axis_name="batch")
                 # pmean over devices.
                 grads, loss_info = jax.lax.pmean((grads, loss_info), axis_name="device")
+                updates, new_opt_state = update_fn(grads, opt_state)
+                new_params = optax.apply_updates(params, updates)
+                total_loss, (actor_loss, entropy, value_loss) = loss_info
+                loss_info = {
+                            "total_loss": total_loss,
+                            "value_loss": value_loss,
+                            "actor_loss": actor_loss,
+                            "entropy": entropy,
+                        }
+
+
+                return (new_params, new_opt_state, key), loss_info
 
                 # Update params and optimiser state
                 updates, new_opt_state = update_fn(grads, opt_state)
@@ -286,7 +309,7 @@ def get_learner_fn(
 
                 return (new_params, new_opt_state, key), loss_info
 
-            (params, opt_states, traj_batch, advantages, targets, key, prev_hstates) = update_state
+            (params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hstates) = update_state
 
             # Shuffle minibatches
             key, batch_shuffle_key, agent_shuffle_key, entropy_key = jax.random.split(key, 4)
@@ -297,14 +320,15 @@ def get_learner_fn(
             batch_list = []
             prev_hs_minibatch_list = []
             minibatches_list = []
+            prev_hstates_list = []
             for i in range(len(traj_batches_list)):
                 batch = (traj_batches_list[i], advantages_list[i], targets_list[i])
                 # print(tree.map(lambda x: x.shape, batch))
-                batch = tree.map(lambda x: jnp.take(x, batch_perm, axis=2), batch)
+                batch = tree.map(lambda x: jnp.take(x, batch_perm, axis=1), batch)
 
                 # Shuffle hidden states
                 
-                prev_hstates_new = tree.map(lambda x: jnp.take(x, batch_perm, axis=1), prev_hstates[i])
+                prev_hstates_new = tree.map(lambda x: jnp.take(x, batch_perm, axis=0), prev_hstates[i])
 
                 # Shuffle agents
                 agent_perm = jax.random.permutation(agent_shuffle_key, config.system.num_agents)
@@ -325,45 +349,58 @@ def get_learner_fn(
                 batch_list.append(batch)
                 prev_hs_minibatch_list.append(prev_hs_minibatch)
                 minibatches_list.append(minibatches)
+                prev_hstates_list.append(prev_hstates_new)
 
             # UPDATE MINIBATCHES
             # print("before losses")
             losses = []
             for i in range(len(minibatches_list)):
                 batch_info = (*minibatches_list[i], prev_hs_minibatch_list[i])
-                (params, opt_states, entropy_key), loss_info =_update_minibatch((params, opt_states, key), batch_info)
+                # (params, opt_states, entropy_key), loss_info =_update_minibatch((params, opt_states, key), batch_info)
+
+
+                (params, opt_states, entropy_key), loss_info = jax.lax.scan(
+                    _update_minibatch,
+                    (params, opt_states, entropy_key),
+                    batch_info,
+                )
                 losses.append(loss_info)
-
-
-            # (params, opt_states, entropy_key), loss_info = jax.lax.scan(
-            #     _update_minibatch,
-            #     (params, opt_states, entropy_key),
-            #     (*minibatches, prev_hs_minibatch),
-            # )
 
             # take the mean over the task dimensions of the loss info
             print(f'losses {type(losses)}')
-            loss_info = tree.map(lambda x: jnp.mean(x, axis=0), losses)
-            print(loss_info)
+            total_losses = {}
+            # total_losses = {
+            #     k: sum(loss[k] for loss in losses) / len(losses)
+            #     for k in losses[0].keys()
+            #     }
+            for i in range(len(losses)):
+                for j in losses[i].keys():
+                    if j not in total_losses.keys():
+                        total_losses[j] = 0
+                    total_losses[j] = total_losses[j] + losses[i][j]
+            for i in total_losses.keys():
+                total_losses[i] = total_losses[i] / len(losses)
 
-            update_state = (params, opt_states, traj_batch, advantages, targets, key, prev_hstates)
-            return update_state, loss_info
 
-        update_state = (params, opt_states, traj_batch, advantages, targets, key, prev_hstates)
+
+            update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hstates_list)
+            return update_state, total_losses
+        
+        update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, updated_hstates_list)
 
         # Update epochs
         update_state, loss_info = jax.lax.scan(
             _update_epoch, update_state, None, config.system.ppo_epochs
         )
 
-        params, opt_states, traj_batch, advantages, targets, key, _ = update_state
+        params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hstates_list = update_state
         learner_state = LearnerState(
             params,
             opt_states,
             key,
-            env_state,
-            last_timestep,
-            updated_hstates,
+            env_states_list,
+            timesteps_list,
+            prev_hstates_list,
         )
         return learner_state, (episode_metrics, loss_info)
 
@@ -439,11 +476,18 @@ def learner_setup(
 
     # Define optimiser.
     lr = make_learning_rate(config.system.actor_lr, config)
-    optim = optax.chain(
-        optax.clip_by_global_norm(config.system.max_grad_norm),
-        optax.adam(lr, eps=1e-5),
+    # optim = optax.chain(
+    #     optax.clip_by_global_norm(config.system.max_grad_norm),
+    #     optax.adam(lr, eps=1e-5),
+    # )
+    optim = MultiSteps(
+        optax.chain(
+            optax.clip_by_global_norm(config.system.max_grad_norm),
+            optax.adam(lr, eps=1e-5),
+        ),
+        every_k_schedule=config.system.grad_acc_steps,  # Number of steps to accumulate
+        use_grad_mean=True  # Whether to average or sum gradients
     )
-
     # Get mock inputs to initialise network.
     init_obs = env.observation_spec.generate_value()
     init_obs = tree.map(lambda x: x[jnp.newaxis, ...], init_obs)  # Add batch dim
@@ -581,7 +625,10 @@ def run_experiment(_config: DictConfig) -> float:
     # One key per device for evaluation.
     eval_keys = jax.random.split(key_e, n_devices)
     eval_act_fn = make_rec_sable_act_fn(sable_execution_fn)
-    evaluator = get_eval_fn(eval_envs, eval_act_fn, config, absolute_metric=False)
+    evaluators_list = []
+    for i in range(len(eval_envs)):
+        evaluator = get_eval_fn(eval_envs[i], eval_act_fn, config, absolute_metric=False)
+        evaluators_list.append(evaluator)
 
     # Calculate total timesteps.
     config = check_total_timesteps(config)
@@ -615,8 +662,7 @@ def run_experiment(_config: DictConfig) -> float:
         )
 
     # Create an initial hidden state used for resetting memory for evaluation
-    eval_batch_size_single = get_num_eval_envs(config, absolute_metric=False)
-    eval_batch_size = len(eval_envs) * eval_batch_size_single 
+    eval_batch_size = get_num_eval_envs(config, absolute_metric=False)
     eval_hs = get_init_hidden_state(config.network.net_config, eval_batch_size)
     eval_hs = flax.jax_utils.replicate(eval_hs, devices=jax.devices())
 
@@ -633,14 +679,14 @@ def run_experiment(_config: DictConfig) -> float:
         # Log the results of the training.
         elapsed_time = time.time() - start_time
         t = int(steps_per_rollout * (eval_step + 1))
-        for task in range(len(envs)):
-            episode_metrics, ep_completed = get_final_step_metrics(learner_output.episode_metrics)
-            episode_metrics["steps_per_second"] = steps_per_rollout / elapsed_time
+        # for task in range(len(envs)):
+        episode_metrics, ep_completed = get_final_step_metrics(learner_output.episode_metrics)
+        episode_metrics["steps_per_second"] = steps_per_rollout / elapsed_time
 
-            if ep_completed:  # only log episode metrics if an episode was completed in the rollout.
-                logger.log(episode_metrics, t, eval_step, LogEvent.ACT)
+        if ep_completed:  # only log episode metrics if an episode was completed in the rollout.
+            logger.log(episode_metrics, t, eval_step, LogEvent.ACT)
 
-        # Separately log timesteps, actoring metrics and training metrics.
+    # Separately log timesteps, actoring metrics and training metrics.
         logger.log({"timestep": t}, t, eval_step, LogEvent.MISC)
         
         logger.log(learner_output.train_metrics, t, eval_step, LogEvent.TRAIN)
@@ -651,9 +697,11 @@ def run_experiment(_config: DictConfig) -> float:
         eval_keys = jnp.stack(eval_keys)
         eval_keys = eval_keys.reshape(n_devices, -1)
         # Evaluate.
-        eval_metrics = evaluator(trained_params, eval_keys, {"hidden_state": eval_hs})
-        logger.log(eval_metrics, t, eval_step, LogEvent.EVAL)
-        episode_return = jnp.mean(eval_metrics["episode_return"])
+        # for i in range(len(eval_keys)):
+        for evaluator_instance in evaluators_list:
+            eval_metrics = evaluator_instance(trained_params, eval_keys, {"hidden_state": eval_hs})
+            logger.log(eval_metrics, t, eval_step, LogEvent.EVAL)
+            episode_return = jnp.mean(eval_metrics["episode_return"])
 
         if save_checkpoint:
             # Save checkpoint of learner state
