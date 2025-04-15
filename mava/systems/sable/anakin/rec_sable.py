@@ -51,7 +51,7 @@ from mava.utils.logger import LogEvent, MavaLogger
 from mava.utils.network_utils import get_action_head
 from mava.utils.training import make_learning_rate
 from mava.wrappers.episode_metrics import get_final_step_metrics
-
+import os
 
 def get_learner_fn(
     envs: List[MarlEnv],
@@ -442,17 +442,18 @@ def learner_setup(
     """Initialise learner_fn, network, optimiser, environment and states."""
     # Get available TPU cores.
     n_devices = len(jax.devices())
-
-    env = envs[0]
+    num_tasks = len(envs)
+    all_num_agents = [env.num_agents for env in envs]
+    max_n_agents = max(all_num_agents)
     # Get number of agents.
-    config.system.num_agents = env.num_agents
+    config.system.num_agents = max_n_agents
+    env_for_spec = envs[0]
 
     # PRNG keys.
     key, net_key = keys
     # Get number of agents and actions.
-    action_dim = env.action_dim
-    n_agents = env.num_agents
-    config.system.num_agents = n_agents
+    action_dim = env_for_spec.action_dim
+    n_agents = max_n_agents
 
     # Setting the chunksize - smaller chunks save memory at the cost of speed
     if config.network.memory_config.timestep_chunk_size:
@@ -462,7 +463,7 @@ def learner_setup(
     else:
         config.network.memory_config.chunk_size = config.system.rollout_length * n_agents
 
-    _, action_space_type = get_action_head(env.action_spec)
+    _, action_space_type = get_action_head(env_for_spec.action_spec)
 
     # Define network.
     sable_network = SableNetwork(
@@ -488,9 +489,85 @@ def learner_setup(
         every_k_schedule=config.system.grad_acc_steps,  # Number of steps to accumulate
         use_grad_mean=True  # Whether to average or sum gradients
     )
-    # Get mock inputs to initialise network.
-    init_obs = env.observation_spec.generate_value()
-    init_obs = tree.map(lambda x: x[jnp.newaxis, ...], init_obs)  # Add batch dim
+
+
+    def pad_observation_object(
+        obs ,
+        target_n_agents,
+        current_n_agents,
+        target_feature_dim,
+        current_feature_dim
+    ):
+
+        agent_padding_needed = target_n_agents - current_n_agents
+
+        # --- Pad agents_view ---
+        padded_agents_view = obs.agents_view
+        # 1. Pad agent dimension
+        if agent_padding_needed > 0:
+            agent_pad_shape = list(obs.agents_view.shape)
+            agent_pad_shape[0] = agent_padding_needed
+            padding_agents = jnp.zeros(agent_pad_shape, dtype=obs.agents_view.dtype)
+            padded_agents_view = jnp.concatenate([padded_agents_view, padding_agents], axis=0)
+        # 2. Pad feature dimension
+        feature_padding_needed = target_feature_dim - current_feature_dim
+        if feature_padding_needed < 0:
+            raise ValueError("Target feature dim cannot be smaller than current.")
+        if feature_padding_needed > 0:
+            feature_pad_shape = list(padded_agents_view.shape) # Use shape after agent padding
+            feature_pad_shape[1] = feature_padding_needed
+            padding_features = jnp.zeros(feature_pad_shape, dtype=obs.agents_view.dtype)
+            padded_agents_view = jnp.concatenate([padded_agents_view, padding_features], axis=1)
+
+        # --- Pad action_mask ---
+        padded_action_mask = obs.action_mask
+        if agent_padding_needed > 0:
+            agent_pad_shape = list(obs.action_mask.shape)
+            agent_pad_shape[0] = agent_padding_needed
+            padding_agents_mask = jnp.full(agent_pad_shape, False, dtype=jnp.bool_) # Pad masks with False
+            padded_action_mask = jnp.concatenate([padded_action_mask, padding_agents_mask], axis=0)
+
+        # --- Pad step_count ---
+        padded_step_count = obs.step_count
+        if agent_padding_needed > 0:
+            agent_pad_shape = list(obs.step_count.shape)
+            agent_pad_shape[0] = agent_padding_needed
+            padding_agents_step = jnp.zeros(agent_pad_shape, dtype=obs.step_count.dtype) # Pad step count with 0
+            padded_step_count = jnp.concatenate([padded_step_count, padding_agents_step], axis=0)
+
+        # --- Create and return a new Observation object ---
+        # Use the same class that was passed in
+        # Note: If Observation has other fields, you might need to copy them too: **obs._asdict()
+        return type(obs)(
+            agents_view=padded_agents_view,
+            action_mask=padded_action_mask,
+            step_count=padded_step_count,
+            # Add other fields from the original obs if they exist and should be preserved
+            # e.g., grid=obs.grid if that's part of the Observation type
+        )
+
+
+    init_obs_unpadded = env_for_spec.observation_spec.generate_value()
+    current_n_agents = env_for_spec.num_agents # Should be 2
+    current_feature_dim = init_obs_unpadded.agents_view.shape[-1] # Get from spec directly
+    spec_av = env_for_spec.observation_spec.agents_view
+    all_feature_dims = []
+    for env in envs:
+        spec_av = env.observation_spec['agents_view']
+        all_feature_dims.append(spec_av.shape[-1])
+
+    max_feature_dim = max(all_feature_dims)
+    init_obs_padded = pad_observation_object(
+        init_obs_unpadded,
+        target_n_agents=max_n_agents,       # e.g., 4
+        current_n_agents=current_n_agents,  # e.g., 2
+        target_feature_dim=max_feature_dim, # e.g., 70
+        current_feature_dim=current_feature_dim # e.g., 68
+    )
+    init_obs = tree.map(lambda x: x[jnp.newaxis, ...], init_obs_padded)  # Add batch dim
+
+    
+
     init_hs = get_init_hidden_state(config.network.net_config, config.arch.num_envs)
     init_hs = tree.map(lambda x: x[0, jnp.newaxis], init_hs)
 
@@ -521,10 +598,17 @@ def learner_setup(
 
     # DO this for all envs
     states_list, timesteps_list = [], []
-    for env in envs:
-        env_states, timesteps = jax.vmap(env.reset, in_axes=(0))(
-            jnp.stack(env_keys),
-        )
+    num_envs_per_task_batch = config.arch.get('num_envs', 1) 
+    num_update_batches = config.system.get('update_batch_size', 1) 
+    total_keys_needed = num_tasks * n_devices * num_update_batches * num_envs_per_task_batch
+    key, init_env_key_base = jax.random.split(key)
+    all_env_keys = jax.random.split(init_env_key_base, total_keys_needed)
+    keys_per_task_flat = all_env_keys.reshape(num_tasks, -1, all_env_keys.shape[-1])
+
+    for i,env in enumerate(envs):
+
+        task_keys_flat = keys_per_task_flat[i]
+        env_states, timesteps = jax.vmap(env.reset, in_axes=(0))(task_keys_flat)
         reshape_states = lambda x: x.reshape(
             (n_devices, config.system.update_batch_size, config.arch.num_envs) + x.shape[1:]
         )
@@ -589,16 +673,46 @@ def learner_setup(
 def run_experiment(_config: DictConfig) -> float:
     """Runs experiment."""
     _config.logger.system_name = "rec_sable"
-    config = copy.deepcopy(_config)
+    config = copy.deepcopy(_config) #
 
     n_devices = len(jax.devices())
+    
+    envs = []
+    eval_envs = []
+    print(f"\n{Fore.CYAN}--- Creating Environments from Config Tasks ---{Style.RESET_ALL}")
 
-    # Create the enviroments for train and eval.
-    env, eval_env = environments.make(config)
-    envs = [env, env]
-    eval_envs = [eval_env, eval_env]
+    
+    tasks_list = OmegaConf.select(config, "env.tasks", default=None) 
 
-    # PRNG keys.
+    scenario_base_path = OmegaConf.select(config, "env.scenario_config_path", default=None)
+    task_cfg_list = []
+    for i, task_spec in enumerate(tasks_list): 
+            
+            task_name = task_spec.get('name', f'Unnamed Task {i+1}')
+            scenario_file_stem = task_spec.get('scenario_file_name')
+            scenario_file_path = os.path.join(scenario_base_path, f"{scenario_file_stem}.yaml")
+            print(f"  Processing Task {i+1}/{len(tasks_list)}: {Style.BRIGHT}{task_name}{Style.RESET_ALL}")
+            scenario_cfg = OmegaConf.load(scenario_file_path)
+            task_cfg = copy.deepcopy(config)
+            OmegaConf.set_struct(task_cfg, False)
+
+
+
+            task_cfg['env']['scenario']['task_config'] = scenario_cfg['task_config']
+            scenario_key = task_spec.get('scenario_key')
+            scenario_value = task_spec.get('scenario_value')
+
+            OmegaConf.update(task_cfg, scenario_key, scenario_value, merge=True)
+            OmegaConf.update(task_cfg.env.scenario, "env_kwargs", {}, merge=True)
+
+                
+            train_env, eval_env = environments.make(task_cfg)
+            envs.append(train_env)
+            eval_envs.append(eval_env)
+            task_cfg_list.append(task_cfg)
+            print(f"    {Fore.GREEN}Successfully created envs for task '{task_name}'.{Style.RESET_ALL}")
+
+# PRNG keys.
     key, key_e, net_key = jax.random.split(jax.random.PRNGKey(config.system.seed), num=3)
 
     # Setup learner.
@@ -627,7 +741,7 @@ def run_experiment(_config: DictConfig) -> float:
     eval_act_fn = make_rec_sable_act_fn(sable_execution_fn)
     evaluators_list = []
     for i in range(len(eval_envs)):
-        evaluator = get_eval_fn(eval_envs[i], eval_act_fn, config, absolute_metric=False)
+        evaluator = get_eval_fn(eval_envs[i], eval_act_fn, task_cfg_list[i], absolute_metric=False)
         evaluators_list.append(evaluator)
 
     # Calculate total timesteps.
