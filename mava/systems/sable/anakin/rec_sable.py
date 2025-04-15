@@ -737,12 +737,33 @@ def run_experiment(_config: DictConfig) -> float:
         return eval_act_fn
 
     # One key per device for evaluation.
-    eval_keys = jax.random.split(key_e, n_devices)
     eval_act_fn = make_rec_sable_act_fn(sable_execution_fn)
+
+    total_eval_keys_needed = n_devices * len(eval_envs)
+    key_e, *eval_keys_flat_list = jax.random.split(key_e, total_eval_keys_needed + 1)
+    eval_keys_flat = jnp.stack(eval_keys_flat_list)
+    eval_keys_per_task_device = eval_keys_flat.reshape(len(eval_envs), n_devices, -1)
+
+    eval_keys = jax.random.split(key_e, n_devices)
     evaluators_list = []
     for i in range(len(eval_envs)):
-        evaluator = get_eval_fn(eval_envs[i], eval_act_fn, task_cfg_list[i], absolute_metric=False)
-        evaluators_list.append(evaluator)
+
+        eval_env_instance = eval_envs[i]
+        task_cfg_for_eval = task_cfg_list[i]
+        task_name = f'task_{i}'
+
+
+        evaluator_fn = get_eval_fn(eval_env_instance, eval_act_fn, task_cfg_for_eval, absolute_metric=False)
+
+        keys_for_this_task = eval_keys_per_task_device[i]
+
+
+        evaluators_list.append({
+            "name": task_name,
+            "eval_fn": evaluator_fn, # The callable function object
+            "keys": keys_for_this_task
+        })
+
 
     # Calculate total timesteps.
     config = check_total_timesteps(config)
@@ -797,6 +818,13 @@ def run_experiment(_config: DictConfig) -> float:
         episode_metrics, ep_completed = get_final_step_metrics(learner_output.episode_metrics)
         episode_metrics["steps_per_second"] = steps_per_rollout / elapsed_time
 
+
+
+
+
+
+
+
         if ep_completed:  # only log episode metrics if an episode was completed in the rollout.
             logger.log(episode_metrics, t, eval_step, LogEvent.ACT)
 
@@ -806,16 +834,43 @@ def run_experiment(_config: DictConfig) -> float:
         logger.log(learner_output.train_metrics, t, eval_step, LogEvent.TRAIN)
 
         # Prepare for evaluation.
-        trained_params = unreplicate_batch_dim(learner_state.params)
-        key_e, *eval_keys = jax.random.split(key_e, n_devices + 1)
-        eval_keys = jnp.stack(eval_keys)
-        eval_keys = eval_keys.reshape(n_devices, -1)
-        # Evaluate.
+        # trained_params = unreplicate_batch_dim(learner_state.params)
+        trained_params = unreplicate_batch_dim(learner_output.learner_state.params)
+        all_eval_metrics = {}
+        total_eval_return = 0.0
+
+
+
+        # key_e, *eval_keys = jax.random.split(key_e, n_devices + 1)
+        # eval_keys = jnp.stack(eval_keys)
+        # eval_keys = eval_keys.reshape(n_devices, -1)
+        # # Evaluate.
         # for i in range(len(eval_keys)):
-        for evaluator_instance in evaluators_list:
-            eval_metrics = evaluator_instance(trained_params, eval_keys, {"hidden_state": eval_hs})
-            logger.log(eval_metrics, t, eval_step, LogEvent.EVAL)
-            episode_return = jnp.mean(eval_metrics["episode_return"])
+        for evaluator_info in evaluators_list:
+            task_name = evaluator_info["name"]
+            evaluator_fn = evaluator_info["eval_fn"]
+            eval_task_keys = evaluator_info["keys"]
+
+            eval_metrics = evaluator_fn(trained_params, eval_task_keys, {"hidden_state": eval_hs})
+            eval_metrics = tree.map(lambda x: jnp.mean(x), eval_metrics)
+            all_eval_metrics[task_name] = eval_metrics
+            prefixed_eval_metrics = {}
+            base_prefix = "evaluator"
+
+            for metric_key, metric_value in eval_metrics.items():
+                new_key = f"{base_prefix}/{task_name}/{metric_key}"
+                prefixed_eval_metrics[new_key] = metric_value
+
+            logger.log(prefixed_eval_metrics, t, eval_step, LogEvent.EVAL)
+            episode_return = float(eval_metrics.get("episode_return", jnp.nan)) 
+            total_eval_return += episode_return
+
+        avg_eval_return = total_eval_return / len(evaluators_list)
+        logger.log({"eval_average/episode_return": avg_eval_return}, t, eval_step, LogEvent.EVAL)
+
+            # eval_metrics = evaluator_instance(trained_params, eval_keys, {"hidden_state": eval_hs})
+            # logger.log(eval_metrics, t, eval_step, LogEvent.EVAL)
+            # episode_return = jnp.mean(eval_metrics["episode_return"])
 
         if save_checkpoint:
             # Save checkpoint of learner state
