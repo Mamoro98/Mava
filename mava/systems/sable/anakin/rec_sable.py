@@ -52,6 +52,8 @@ from mava.utils.network_utils import get_action_head
 from mava.utils.training import make_learning_rate
 from mava.wrappers.episode_metrics import get_final_step_metrics
 import os
+from flax.core import freeze, unfreeze
+
 
 def get_learner_fn(
     envs: List[MarlEnv],
@@ -64,6 +66,8 @@ def get_learner_fn(
     # Get apply functions for executing and training the network.
     sable_action_select_fn, sable_apply_fn = apply_fns
     num_envs = config.arch.num_envs
+    max_n_agents = config.system.num_agents 
+
 
     def _update_step(learner_state: LearnerState, _: Any) -> Tuple[LearnerState, Tuple]:
         """A single update of the network.
@@ -87,7 +91,7 @@ def get_learner_fn(
         """
 
         def _env_step(
-            learner_state: LearnerState, _: Any
+            learner_state: LearnerState,task_id:int, _: Any
         ) -> Tuple[LearnerState, Tuple[Transition, Metrics]]:
             """Step the environment."""
             params, opt_states, key, env_state, last_timestep, hstates = learner_state
@@ -102,6 +106,7 @@ def get_learner_fn(
                 last_obs,
                 hstates,
                 policy_key,
+                task_id = task_id
             )
 
             # Step environment
@@ -151,9 +156,22 @@ def get_learner_fn(
             new_learner_state = LearnerState(params, opt_states, key, env_state_i, last_timestep_i, hstates_i)
             # env is now global -> leads to jit silent error in the future when the env is different 
             env = envs[i]
+
+            def _env_step_for_task_i(carry, dummy):
+                return _env_step(carry, i, dummy)
+
             new_learner_state, (traj_batch, episode_metrics) = jax.lax.scan(
-                _env_step, new_learner_state, length=config.system.rollout_length
-            ) 
+                f=_env_step_for_task_i,
+                init=new_learner_state,
+                xs=None,
+                length=config.system.rollout_length,
+            )
+
+
+            # _env_step_for_task_i = partial(_env_step, task_id = i)
+            # new_learner_state, (traj_batch, episode_metrics) = jax.lax.scan(
+            #    f = _env_step_for_task_i, init = new_learner_state, xs = None ,length=config.system.rollout_length
+            # ) 
 
             # Calculate advantage
             params_new, opt_states_new, key, env_state_new, last_timestep_new, updated_hstates_new = new_learner_state
@@ -162,7 +180,7 @@ def get_learner_fn(
             
             key, last_val_key = jax.random.split(key)
             _, _, last_val, _ = sable_action_select_fn(  # type: ignore
-                params_new, last_timestep_new.observation, updated_hstates_new, last_val_key
+                params_new, last_timestep_new.observation, updated_hstates_new, last_val_key,task_id=i
             )
             
             # last_done = last_timestep_new.last().repeat(env.num_agents).reshape(num_envs, -1)
@@ -230,7 +248,9 @@ def get_learner_fn(
                         traj_batch.action,
                         prev_hstates,
                         traj_batch.done,
+                        i,
                         rng_key,
+                        
                     )
 
                     # Calculate actor loss
@@ -472,7 +492,9 @@ def learner_setup(
         action_dim=action_dim,
         net_config=config.network.net_config,
         memory_config=config.network.memory_config,
-        action_space_type=action_space_type,
+        action_space_type=action_space_type,   
+        num_tasks=num_tasks
+
     )
 
     # Define optimiser.
@@ -548,29 +570,29 @@ def learner_setup(
 
 
     init_obs_unpadded = env_for_spec.observation_spec.generate_value()
-    current_n_agents = env_for_spec.num_agents # Should be 2
-    current_feature_dim = init_obs_unpadded.agents_view.shape[-1] # Get from spec directly
-    spec_av = env_for_spec.observation_spec.agents_view
-    all_feature_dims = []
-    for env in envs:
-        spec_av = env.observation_spec['agents_view']
-        all_feature_dims.append(spec_av.shape[-1])
+    # current_n_agents = env_for_spec.num_agents # Should be 2
+    # current_feature_dim = init_obs_unpadded.agents_view.shape[-1] # Get from spec directly
+    # spec_av = env_for_spec.observation_spec.agents_view
+    # all_feature_dims = []
+    # for env in envs:
+    #     spec_av = env.observation_spec['agents_view']
+    #     all_feature_dims.append(spec_av.shape[-1])
 
-    max_feature_dim = max(all_feature_dims)
-    init_obs_padded = pad_observation_object(
-        init_obs_unpadded,
-        target_n_agents=max_n_agents,       # e.g., 4
-        current_n_agents=current_n_agents,  # e.g., 2
-        target_feature_dim=max_feature_dim, # e.g., 70
-        current_feature_dim=current_feature_dim # e.g., 68
-    )
-    init_obs = tree.map(lambda x: x[jnp.newaxis, ...], init_obs_padded)  # Add batch dim
+    # max_feature_dim = max(all_feature_dims)
+    # init_obs_padded = pad_observation_object(
+    #     init_obs_unpadded,
+    #     target_n_agents=max_n_agents,       # e.g., 4
+    #     current_n_agents=current_n_agents,  # e.g., 2
+    #     target_feature_dim=max_feature_dim, # e.g., 70
+    #     current_feature_dim=current_feature_dim # e.g., 68
+    # )
+    init_obs = tree.map(lambda x: x[jnp.newaxis, ...], init_obs_unpadded)  # Add batch dim
 
     
 
     init_hs = get_init_hidden_state(config.network.net_config, config.arch.num_envs)
     init_hs = tree.map(lambda x: x[0, jnp.newaxis], init_hs)
-
+    init_task_id = 0 
     # Initialise params and optimiser state.
     params = sable_network.init(
         net_key,
@@ -578,7 +600,35 @@ def learner_setup(
         init_hs,
         net_key,
         method="get_actions",
+        task_id = init_task_id
     )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     opt_state = optim.init(params)
 
     # Pack apply and update functions.
@@ -719,7 +769,7 @@ def run_experiment(_config: DictConfig) -> float:
     learn, sable_execution_fn, learner_state = learner_setup(envs, (key, net_key), config)
 
     # Setup evaluator.
-    def make_rec_sable_act_fn(actor_apply_fn: ActorApply) -> EvalActFn:
+    def make_rec_sable_act_fn(actor_apply_fn: ActorApply, task_id:int) -> EvalActFn:
         _hidden_state = "hidden_state"
 
         def eval_act_fn(
@@ -731,13 +781,13 @@ def run_experiment(_config: DictConfig) -> float:
                 timestep.observation,
                 hidden_state,
                 key,
+                task_id = task_id
             )
             return output_action, {_hidden_state: hidden_state}
 
         return eval_act_fn
 
     # One key per device for evaluation.
-    eval_act_fn = make_rec_sable_act_fn(sable_execution_fn)
 
     total_eval_keys_needed = n_devices * len(eval_envs)
     key_e, *eval_keys_flat_list = jax.random.split(key_e, total_eval_keys_needed + 1)
@@ -747,6 +797,7 @@ def run_experiment(_config: DictConfig) -> float:
     eval_keys = jax.random.split(key_e, n_devices)
     evaluators_list = []
     for i in range(len(eval_envs)):
+        eval_act_fn = make_rec_sable_act_fn(sable_execution_fn,i)
 
         eval_env_instance = eval_envs[i]
         task_cfg_for_eval = task_cfg_list[i]
@@ -760,7 +811,7 @@ def run_experiment(_config: DictConfig) -> float:
 
         evaluators_list.append({
             "name": task_name,
-            "eval_fn": evaluator_fn, # The callable function object
+            "eval_fn": evaluator_fn, 
             "keys": keys_for_this_task
         })
 

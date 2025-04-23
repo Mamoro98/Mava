@@ -43,6 +43,7 @@ def discrete_train_decoder_fn(
     step_count: chex.Array,
     n_agents: int,
     chunk_size: int,
+    task_id: int,
     rng_key: Optional[chex.PRNGKey] = None,
 ) -> Tuple[chex.Array, chex.Array]:
     """Parallel action sampling for discrete action spaces."""
@@ -68,6 +69,7 @@ def discrete_train_decoder_fn(
             hstates=hstates,
             dones=chunk_dones,
             step_count=chunk_step_count,
+            task_id = task_id,
         )
         logit = logit.at[:, start_idx:end_idx].set(chunk_logit)
 
@@ -116,6 +118,7 @@ def discrete_autoregressive_act(
     legal_actions: chex.Array,
     step_count: chex.Array,
     key: chex.PRNGKey,
+    task_id: int,
 ) -> Tuple[chex.Array, chex.Array, chex.Array]:
     B, N, A = legal_actions.shape
 
@@ -132,6 +135,7 @@ def discrete_autoregressive_act(
             obs_rep=obs_rep[:, i : i + 1, :],
             hstates=hstates,
             step_count=step_count[:, i : i + 1],
+            task_id = task_id,
         )
         masked_logits = jnp.where(
             legal_actions[:, i : i + 1, :],
@@ -165,6 +169,7 @@ def continuous_train_decoder_fn(
     n_agents: int,
     chunk_size: int,
     action_dim: int,
+    task_id: int,
     rng_key: Optional[chex.PRNGKey] = None,
 ) -> Tuple[chex.Array, chex.Array]:
     """Parallel action sampling for discrete action spaces."""
@@ -191,6 +196,7 @@ def continuous_train_decoder_fn(
             hstates=hstates,
             dones=chunk_dones,
             step_count=chunk_step_count,
+            task_id = task_id,
         )
         act_mean = act_mean.at[:, start_idx:end_idx].set(chunked_act_mean)
 
@@ -230,6 +236,7 @@ def continuous_autoregressive_act(
     step_count: chex.Array,
     action_dim: int,
     key: chex.PRNGKey,
+    task_id: int,
 ) -> Tuple[chex.Array, chex.Array, chex.Array]:
     # Delete `legal_actions` since it is not used in continuous action space
     del legal_actions
@@ -246,6 +253,7 @@ def continuous_autoregressive_act(
             obs_rep=obs_rep[:, i : i + 1, :],
             hstates=hstates,
             step_count=step_count[:, i : i + 1],
+            task_id = task_id,
         )
         action_std = jax.nn.softplus(decoder.log_std) + _MIN_SCALE
 
