@@ -126,7 +126,6 @@ def get_learner_fn(
             return learner_state, (transition, timestep.extras["episode_metrics"])
 
         # Copy old hidden states: to be used in the training loop
-        prev_hstates = tree.map(lambda x: jnp.copy(x), learner_state.hstates)
 
         # Step environment for rollout length
         # loop over lists
@@ -148,6 +147,7 @@ def get_learner_fn(
         updated_hstates_list = []
         env_states_list = []
         timesteps_list = []
+        episode_metric_list = []
 
         for i in range(len(envs)):
             env_state_i = env_state_old[i]
@@ -167,6 +167,7 @@ def get_learner_fn(
                 length=config.system.rollout_length,
             )
 
+            episode_metric_list.append(episode_metrics)
 
             # _env_step_for_task_i = partial(_env_step, task_id = i)
             # new_learner_state, (traj_batch, episode_metrics) = jax.lax.scan(
@@ -227,7 +228,7 @@ def get_learner_fn(
         def _update_epoch(update_state: Tuple, _: Any) -> Tuple:
             """Update the network for a single epoch."""
 
-            def _update_minibatch(train_state: Tuple, batch_info: Tuple) -> Tuple:
+            def _update_minibatch(train_state: Tuple, batch_info: Tuple,task_id:int) -> Tuple:
                 """Update the network for a single minibatch."""
                 params, opt_state, key = train_state
                 traj_batch, advantages, targets, prev_hstates = batch_info
@@ -239,6 +240,7 @@ def get_learner_fn(
                     value_targets: chex.Array,
                     prev_hstates: HiddenStates,
                     rng_key: chex.PRNGKey,
+                    task_id: int,
                 ) -> Tuple:
                     """Calculate Sable loss."""
                     # Rerun network
@@ -248,7 +250,7 @@ def get_learner_fn(
                         traj_batch.action,
                         prev_hstates,
                         traj_batch.done,
-                        i,
+                        task_id,
                         rng_key,
                         
                     )
@@ -295,6 +297,7 @@ def get_learner_fn(
                     targets,
                     prev_hstates,
                     entropy_key,
+                    task_id
                 )
 
                 # Compute the parallel mean (pmean) over the batch.
@@ -315,19 +318,7 @@ def get_learner_fn(
 
                 return (new_params, new_opt_state, key), loss_info
 
-                # Update params and optimiser state
-                updates, new_opt_state = update_fn(grads, opt_state)
-                new_params = optax.apply_updates(params, updates)
 
-                total_loss, (actor_loss, entropy, value_loss) = loss_info
-                loss_info = {
-                    "total_loss": total_loss,
-                    "value_loss": value_loss,
-                    "actor_loss": actor_loss,
-                    "entropy": entropy,
-                }
-
-                return (new_params, new_opt_state, key), loss_info
 
             (params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hstates) = update_state
 
@@ -378,9 +369,11 @@ def get_learner_fn(
                 batch_info = (*minibatches_list[i], prev_hs_minibatch_list[i])
                 # (params, opt_states, entropy_key), loss_info =_update_minibatch((params, opt_states, key), batch_info)
 
-
+                def _update_minibatch_for_task_i(carry, dummy):
+                                return _update_minibatch(carry, dummy,task_id=i)
+                
                 (params, opt_states, entropy_key), loss_info = jax.lax.scan(
-                    _update_minibatch,
+                    _update_minibatch_for_task_i,
                     (params, opt_states, entropy_key),
                     batch_info,
                 )
@@ -413,14 +406,14 @@ def get_learner_fn(
             _update_epoch, update_state, None, config.system.ppo_epochs
         )
 
-        params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hstates_list = update_state
+        params, opt_states, traj_batches_list, advantages_list, targets_list, key, updated_hstates_list = update_state
         learner_state = LearnerState(
             params,
             opt_states,
             key,
             env_states_list,
             timesteps_list,
-            prev_hstates_list,
+            updated_hstates_list,
         )
         return learner_state, (episode_metrics, loss_info)
 
@@ -472,7 +465,17 @@ def learner_setup(
     # PRNG keys.
     key, net_key = keys
     # Get number of agents and actions.
-    action_dim = env_for_spec.action_dim
+    task_action_dims = []
+    task_action_space_types = []
+    for i, env_task in enumerate(envs):
+
+        task_act_dim = env_task.action_dim
+        _, task_act_type = get_action_head(env_task.action_spec)
+
+        task_action_dims.append(task_act_dim)
+        task_action_space_types.append(task_act_type)
+
+    # action_dim = env_for_spec.action_dim
     n_agents = max_n_agents
 
     # Setting the chunksize - smaller chunks save memory at the cost of speed
@@ -483,16 +486,16 @@ def learner_setup(
     else:
         config.network.memory_config.chunk_size = config.system.rollout_length * n_agents
 
-    _, action_space_type = get_action_head(env_for_spec.action_spec)
+    # _, action_space_type = get_action_head(env_for_spec.action_spec)
 
     # Define network.
     sable_network = SableNetwork(
         n_agents=n_agents,
         n_agents_per_chunk=n_agents,
-        action_dim=action_dim,
+        task_action_dims=task_action_dims,
         net_config=config.network.net_config,
         memory_config=config.network.memory_config,
-        action_space_type=action_space_type,   
+        task_action_space_types=task_action_space_types,   
         num_tasks=num_tasks
 
     )
@@ -599,35 +602,8 @@ def learner_setup(
         init_obs,
         init_hs,
         net_key,
-        method="get_actions",
-        task_id = init_task_id
+        method="init_all_tasks",
     )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     opt_state = optim.init(params)
 
@@ -848,9 +824,13 @@ def run_experiment(_config: DictConfig) -> float:
         )
 
     # Create an initial hidden state used for resetting memory for evaluation
-    eval_batch_size = get_num_eval_envs(config, absolute_metric=False)
-    eval_hs = get_init_hidden_state(config.network.net_config, eval_batch_size)
-    eval_hs = flax.jax_utils.replicate(eval_hs, devices=jax.devices())
+    eval_hs_list = []
+
+    for _ in range(len(eval_envs)):
+        eval_batch_size = get_num_eval_envs(config, absolute_metric=False)
+        eval_hs = get_init_hidden_state(config.network.net_config, eval_batch_size)
+        eval_hs = flax.jax_utils.replicate(eval_hs, devices=jax.devices())
+        eval_hs_list.append(eval_hs)
 
     # Run experiment for a total number of evaluations.
     max_episode_return = -jnp.inf
@@ -897,12 +877,12 @@ def run_experiment(_config: DictConfig) -> float:
         # eval_keys = eval_keys.reshape(n_devices, -1)
         # # Evaluate.
         # for i in range(len(eval_keys)):
-        for evaluator_info in evaluators_list:
+        for idx,evaluator_info in enumerate(evaluators_list):
             task_name = evaluator_info["name"]
             evaluator_fn = evaluator_info["eval_fn"]
             eval_task_keys = evaluator_info["keys"]
 
-            eval_metrics = evaluator_fn(trained_params, eval_task_keys, {"hidden_state": eval_hs})
+            eval_metrics = evaluator_fn(trained_params, eval_task_keys, {"hidden_state": eval_hs_list[idx]})
             eval_metrics = tree.map(lambda x: jnp.mean(x), eval_metrics)
             all_eval_metrics[task_name] = eval_metrics
             prefixed_eval_metrics = {}

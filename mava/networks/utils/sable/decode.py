@@ -33,6 +33,8 @@ from mava.networks.distributions import TanhTransformedDistribution
 _MIN_SCALE = 1e-3
 
 
+# TODO understand and change the shifted action function
+
 def discrete_train_decoder_fn(
     decoder: nn.Module,
     obs_rep: chex.Array,

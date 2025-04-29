@@ -1,6 +1,6 @@
 # ---  Retention for Memory Sable ---
 net_config:
-  n_block: 1 # Number of blocks
+  n_block: 4 # Number of blocks
   embed_dim: 64 # Embedding dimension
   n_head: 1 # Number of heads
 

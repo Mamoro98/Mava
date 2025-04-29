@@ -36,6 +36,7 @@ from mava.networks.utils.sable import (
 from mava.systems.sable.types import HiddenStates, SableNetworkConfig
 from mava.types import Observation
 from mava.utils.network_utils import _CONTINUOUS, _DISCRETE
+from typing import Sequence 
 
 
 class TaskPolicyHeadMLP(nn.Module):
@@ -104,6 +105,25 @@ class TaskValueHeadMLP(nn.Module):
         return value
 
 
+class TaskActionEncoderMLP(nn.Module):
+    embed_dim: int  
+    action_dim: int 
+    name: Optional[str] = None
+
+    def setup(self):
+        self.action_embedding_layer = nn.Dense(
+                    self.embed_dim,
+                    use_bias=True,
+                    kernel_init=orthogonal(jnp.sqrt(2)),
+                )
+
+
+    @nn.compact
+    def __call__(self, action: chex.Array) -> chex.Array:
+        x = self.action_embedding_layer(action)
+        x = nn.gelu(x)
+        return x
+    
 class EncodeBlock(nn.Module):   
     """Sable encoder block."""
 
@@ -159,39 +179,10 @@ class Encoder(nn.Module):
     def setup(self) -> None:
         self.ln = nn.RMSNorm()
 
-        # self.obs_encoder = nn.Sequential(
-        #     [
-        #         nn.RMSNorm(),
-        #         nn.Dense(
-        #             self.net_config.embed_dim, kernel_init=orthogonal(jnp.sqrt(2)), use_bias=False
-        #         ),
-        #         nn.gelu,
-        #     ],
-        # )
-
-        # encoder_dict = {}
-        # for task_id in range(self.num_tasks):
-        #     encoder_dict[task_id] = TaskObsEncoderMLP(embed_dim=self.net_config.embed_dim)
-        
-        # self.task_obs_encoders = encoder_dict
-
         self.task_obs_encoders = [
         TaskObsEncoderMLP(self.net_config.embed_dim, name=f"task_obs_encoder_{i}")
         for i in range(self.num_tasks)
         ]
-
-
-
-        # # changed this later -> will get me the value function
-        # self.head = nn.Sequential(
-        #     [
-        #         nn.Dense(self.net_config.embed_dim, kernel_init=orthogonal(jnp.sqrt(2))),
-        #         nn.gelu,
-        #         nn.RMSNorm(),
-        #         nn.Dense(1, kernel_init=orthogonal(0.01)),
-        #     ],
-        # )
-        
 
         self.task_value_heads = [ 
             TaskValueHeadMLP(
@@ -200,7 +191,6 @@ class Encoder(nn.Module):
             ) for task_id in range(self.num_tasks) 
         ]
 
-        # i think i will not change this 
         self.blocks = [
             EncodeBlock(
                 self.net_config,
@@ -223,7 +213,6 @@ class Encoder(nn.Module):
         updated_hstate = jnp.zeros_like(hstate)
         # Apply the encoder blocks
         for i, block in enumerate(self.blocks):
-            # TODO Change the hidden states to make every task have its specific hstate
             hs = hstate[:, :, i]  # Get the hidden state for the current block
             # Apply the chunkwise encoder block
             obs_rep, hs_new = block(self.ln(obs_rep), hs, dones, step_count)
@@ -246,10 +235,6 @@ class Encoder(nn.Module):
         # for enc in self.task_obs_encoders:
         #     _rep, _hs = enc.recurrent(obs, dummy_h, step_count)
 
-        for enc in self.task_obs_encoders:
-          _ = enc(obs)
-
-
 
         selected_encoder = self.task_obs_encoders[task_id] 
         obs_rep = selected_encoder(obs)
@@ -258,7 +243,6 @@ class Encoder(nn.Module):
 
         # Apply the encoder blocks
         for i, block in enumerate(self.blocks):
-            # TODO same error
             hs = hstate[:, :, i]  # Get the hidden state for the current block
             # Apply the recurrent encoder block
             obs_rep, hs_new = block.recurrent(self.ln(obs_rep), hs, step_count)
@@ -266,8 +250,6 @@ class Encoder(nn.Module):
 
         # Compute the value function
         # value = self.head(obs_rep)
-        for val in self.task_value_heads:
-          _ = val(obs_rep) 
 
         selected_value_head = self.task_value_heads[task_id] 
         value = selected_value_head(obs_rep) 
@@ -368,46 +350,34 @@ class Decoder(nn.Module):
     net_config: SableNetworkConfig
     memory_config: DictConfig
     n_agents: int
-    action_dim: int
+    tasks_action_dims: list[int]
     num_tasks: int 
-    action_space_type: str = _DISCRETE
+    tasks_action_space_type: list[str]
 
     def setup(self) -> None:
         self.ln = nn.RMSNorm()
 
-        use_bias = self.action_space_type == _CONTINUOUS
-        self.action_encoder = nn.Sequential(
-            [
-                nn.Dense(
-                    self.net_config.embed_dim,
-                    use_bias=use_bias,
-                    kernel_init=orthogonal(jnp.sqrt(2)),
-                ),
-                nn.gelu,
-            ],
-        )
 
-        # Always initialize log_std but set to None for discrete action spaces
-        # This ensures the attribute exists but signals it should not be used.
+        self.task_action_encoders = [ 
+            TaskActionEncoderMLP(
+                embed_dim=self.net_config.embed_dim, 
+                action_dim=self.tasks_action_dims[task_id],       
+                name= f"action_encoder_{task_id}"
+            ) for task_id in range(self.num_tasks) 
+        ]
+
+        #TODO I should change this later
         self.log_std = (
-            self.param("log_std", nn.initializers.zeros, (self.action_dim,))
-            if self.action_space_type == _CONTINUOUS
+            self.param("log_std", nn.initializers.zeros, (self.tasks_action_dims[0],))
+            if self.tasks_action_space_type[0] == _CONTINUOUS
             else None
         )
 
-        # self.head = nn.Sequential(
-        #     [
-        #         nn.Dense(self.net_config.embed_dim, kernel_init=orthogonal(jnp.sqrt(2))),
-        #         nn.gelu,
-        #         nn.RMSNorm(),
-        #         nn.Dense(self.action_dim, kernel_init=orthogonal(0.01)),
-        #     ],
-        # )
 
         self.task_policy_heads = [ 
             TaskPolicyHeadMLP(
                 embed_dim=self.net_config.embed_dim, 
-                action_dim=self.action_dim,       
+                action_dim=self.tasks_action_dims[task_id],       
                 name=f"policy_head_{task_id}"
             ) for task_id in range(self.num_tasks) 
         ]
@@ -433,13 +403,15 @@ class Decoder(nn.Module):
     ) -> Tuple[chex.Array, Tuple[chex.Array, chex.Array]]:
         """Apply chunkwise decoding."""
         updated_hstates = tree.map(jnp.zeros_like, hstates)
-        # TODO if we have different action spaces we should make different ones based on the task
-        action_embeddings = self.action_encoder(action)
+        # action_embeddings = self.action_encoder(action)
+
+        selected_action_encoder = self.task_action_encoders[task_id] 
+        action_embeddings = selected_action_encoder(action)
+
         x = self.ln(action_embeddings)
 
         # Apply the decoder blocks
         for i, block in enumerate(self.blocks):
-            # TODO hidden state changes here also
             hs = tree.map(lambda x, j=i: x[:, :, j], hstates)
             x, hs_new = block(x=x, obs_rep=obs_rep, hstates=hs, dones=dones, step_count=step_count)
             updated_hstates = tree.map(
@@ -462,16 +434,16 @@ class Decoder(nn.Module):
     ) -> Tuple[chex.Array, Tuple[chex.Array, chex.Array]]:
         """Apply recurrent decoding."""
         updated_hstates = tree.map(jnp.zeros_like, hstates)
-        # TODO action dims changes here also
-        action_embeddings = self.action_encoder(action)
+        # action_embeddings = self.action_encoder(action)
+
+        selected_action_encoder = self.task_action_encoders[task_id] 
+        action_embeddings = selected_action_encoder(action)
+
         x = self.ln(action_embeddings)
-        for dec in self.task_policy_heads:
-          _ = dec(obs_rep) 
 
 
         # Apply the decoder blocks
         for i, block in enumerate(self.blocks):
-            # TODO hidden states changes here also
             hs = tree.map(lambda x, i=i: x[:, :, i], hstates)
             x, hs_new = block.recurrent(x=x, obs_rep=obs_rep, hstates=hs, step_count=step_count)
             updated_hstates = tree.map(
@@ -491,15 +463,15 @@ class SableNetwork(nn.Module):
 
     n_agents: int
     n_agents_per_chunk: int
-    action_dim: int
+    task_action_dims: list
     net_config: SableNetworkConfig
     memory_config: DictConfig
+    task_action_space_types: list
     num_tasks:int 
-    action_space_type: str = _DISCRETE
 
     def setup(self) -> None:
-        if self.action_space_type not in [_DISCRETE, _CONTINUOUS]:
-            raise ValueError(f"Invalid action space type: {self.action_space_type}")
+        # if self.action_space_type not in [_DISCRETE, _CONTINUOUS]:
+        #     raise ValueError(f"Invalid action space type: {self.action_space_type}")
 
         assert (
             self.memory_config.decay_scaling_factor >= 0
@@ -523,9 +495,9 @@ class SableNetwork(nn.Module):
             self.net_config,
             self.memory_config,
             self.n_agents_per_chunk,
-            self.action_dim,
+            self.task_action_dims,
             self.num_tasks,
-            self.action_space_type,
+            self.task_action_space_types,
         )
 
         # Set the actor and trainer functions
@@ -537,15 +509,16 @@ class SableNetwork(nn.Module):
             act_encoder_fn,
             chunk_size=self.n_agents_per_chunk,
         )
-        if self.action_space_type == _CONTINUOUS:
+        # TODO what if the action space is cont ?  or what if i got mixed action spaces? probably move this condions to the __call function 
+        if self.task_action_space_types[0] == _CONTINUOUS:
             self.train_decoder_fn = partial(
                 continuous_train_decoder_fn,
                 n_agents=self.n_agents,
                 chunk_size=self.memory_config.chunk_size,
-                action_dim=self.action_dim,
+                action_dim=self.task_action_dims[0],
             )
             self.autoregressive_act = partial(
-                continuous_autoregressive_act, action_dim=self.action_dim
+                continuous_autoregressive_act, action_dim=self.task_action_dims[0]
             )
         else:
             self.train_decoder_fn = partial(
@@ -640,51 +613,42 @@ class SableNetwork(nn.Module):
 
     @nn.compact
     def init_all_tasks(
-        self,
-        dummy_observation: Observation, 
-        dummy_action: chex.Array,       
-        dummy_hstates: HiddenStates,    
-        dummy_dones: chex.Array,        
+      self,
+        observation: Observation,
+        hstates: HiddenStates,
+        key: chex.PRNGKey,
         ) -> None: 
-        dummy_key = jax.random.PRNGKey(0)
-        for task_id in range(self.num_tasks):
-            dummy_step_count = jnp.zeros_like(dummy_observation.step_count) 
-            _, _, _ = self.encoder(
-                obs=dummy_observation.agents_view, 
-                hstate=dummy_hstates.encoder,      
-                dones=dummy_dones,                 
-                step_count=dummy_step_count,       
-                task_id=task_id                    
-            )
-            dummy_obs_rep_shape = list(dummy_observation.agents_view.shape[:-1]) + [self.net_config.embed_dim]
-            dummy_obs_rep = jnp.zeros(dummy_obs_rep_shape, dtype=jnp.float32)
-            dummy_dec_hstates = (dummy_hstates.decoder_self_retn, dummy_hstates.decoder_cross_retn)
 
-            _, _ = self.decoder(
-                    action=dummy_action,           
-                    obs_rep=dummy_obs_rep,       
-                    hstates=dummy_dec_hstates,   
-                    dones=dummy_dones,           
-                    step_count=dummy_step_count, 
-                    task_id=task_id               
-            )
+        obs, legal_actions, step_count = (
+            observation.agents_view,
+            observation.action_mask,
+            observation.step_count,
+        )
 
-            
-            
-            _, _, _ = self.encoder.recurrent(
-                obs=dummy_observation.agents_view, 
-                hstate=dummy_hstates.encoder,      
-                step_count=dummy_step_count,       
-                task_id=task_id                    
-                
+        decayed_hstates = tree.map(lambda x: x * self.decay_kappas, hstates)
+        for task_id in range(len(self.encoder.task_obs_encoders)):
+            value, obs_rep, updated_enc_hs = self.act_encoder_fn(
+                    encoder=self.encoder,
+                    obs=obs,
+                    decayed_hstate=decayed_hstates[0],
+                    step_count=step_count,
+                    task_id=task_id
+                )
+        for task_id in range(len(self.decoder.task_policy_heads)):
+            output_actions, output_actions_log, updated_dec_hs = self.autoregressive_act(
+                decoder=self.decoder,
+                obs_rep=obs_rep,
+                legal_actions=legal_actions,
+                hstates=decayed_hstates[1:],
+                step_count=step_count,
+                key=key,
+                task_id = task_id,
             )
 
-            
-            dummy_action_embedding = jnp.zeros_like(dummy_obs_rep) 
-            _, _ = self.decoder.recurrent(
-                    action=dummy_action_embedding, 
-                    obs_rep=dummy_obs_rep,       
-                    hstates=dummy_dec_hstates,   
-                    step_count=dummy_step_count, 
-                    task_id=task_id               
-            )
+        updated_hs = HiddenStates(
+            encoder=updated_enc_hs,
+            decoder_self_retn=updated_dec_hs[0],
+            decoder_cross_retn=updated_dec_hs[1],
+        )
+
+        

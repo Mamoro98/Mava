@@ -8,15 +8,15 @@ scenario:
   task_config: {} 
 
 tasks:
-  - name: small-4ag
-    scenario_key: env.scenario.name 
-    scenario_value: RobotWarehouse-v0
-    scenario_file_name: small-4ag 
-
   - name: tiny-4ag
     scenario_key: env.scenario.name 
     scenario_value: RobotWarehouse-v0
     scenario_file_name: tiny-4ag 
+
+  - name: tiny-4ag-hard
+    scenario_key: env.scenario.name 
+    scenario_value: RobotWarehouse-v0
+    scenario_file_name: tiny-4ag-hard 
 
 env_name: RobotWarehouse  
 eval_metric: episode_return
