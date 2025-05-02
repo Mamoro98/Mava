@@ -572,35 +572,23 @@ def learner_setup(
         )
 
 
-    init_obs_unpadded = env_for_spec.observation_spec.generate_value()
-    # current_n_agents = env_for_spec.num_agents # Should be 2
-    # current_feature_dim = init_obs_unpadded.agents_view.shape[-1] # Get from spec directly
-    # spec_av = env_for_spec.observation_spec.agents_view
-    # all_feature_dims = []
-    # for env in envs:
-    #     spec_av = env.observation_spec['agents_view']
-    #     all_feature_dims.append(spec_av.shape[-1])
+    inti_obs_list = []
+    init_hs_list = []
+    for idx in range(len(envs)):
 
-    # max_feature_dim = max(all_feature_dims)
-    # init_obs_padded = pad_observation_object(
-    #     init_obs_unpadded,
-    #     target_n_agents=max_n_agents,       # e.g., 4
-    #     current_n_agents=current_n_agents,  # e.g., 2
-    #     target_feature_dim=max_feature_dim, # e.g., 70
-    #     current_feature_dim=current_feature_dim # e.g., 68
-    # )
-    init_obs = tree.map(lambda x: x[jnp.newaxis, ...], init_obs_unpadded)  # Add batch dim
-
+        init_obs_unpadded = envs[idx].observation_spec.generate_value()
+        init_obs = tree.map(lambda x: x[jnp.newaxis, ...], init_obs_unpadded)
+        inti_obs_list.append(init_obs)
     
-
-    init_hs = get_init_hidden_state(config.network.net_config, config.arch.num_envs)
-    init_hs = tree.map(lambda x: x[0, jnp.newaxis], init_hs)
+        init_hs = get_init_hidden_state(config.network.net_config, config.arch.num_envs)
+        init_hs = tree.map(lambda x: x[0, jnp.newaxis], init_hs)
+        init_hs_list.append(init_hs)
     init_task_id = 0 
     # Initialise params and optimiser state.
     params = sable_network.init(
         net_key,
-        init_obs,
-        init_hs,
+        inti_obs_list,
+        init_hs_list,
         net_key,
         method="init_all_tasks",
     )
@@ -731,6 +719,7 @@ def run_experiment(_config: DictConfig) -> float:
             OmegaConf.update(task_cfg, scenario_key, scenario_value, merge=True)
             OmegaConf.update(task_cfg.env.scenario, "env_kwargs", {}, merge=True)
 
+            task_cfg['env']['env_name'] = task_cfg['env']['envs_name'][i]['name'] 
                 
             train_env, eval_env = environments.make(task_cfg)
             envs.append(train_env)
@@ -835,6 +824,7 @@ def run_experiment(_config: DictConfig) -> float:
     # Run experiment for a total number of evaluations.
     max_episode_return = -jnp.inf
     best_params = None
+    total_return = 0
     for eval_step in range(config.arch.num_evaluation):
         # Train.
         start_time = time.time()
@@ -897,6 +887,7 @@ def run_experiment(_config: DictConfig) -> float:
             total_eval_return += episode_return
 
         avg_eval_return = total_eval_return / len(evaluators_list)
+        total_return = total_return + avg_eval_return
         logger.log({"eval_average/episode_return": avg_eval_return}, t, eval_step, LogEvent.EVAL)
 
             # eval_metrics = evaluator_instance(trained_params, eval_keys, {"hidden_state": eval_hs})
@@ -937,7 +928,7 @@ def run_experiment(_config: DictConfig) -> float:
     # Stop the logger.
     logger.stop()
 
-    return eval_performance
+    return total_return / (config.arch.num_evaluation * 2)
 
 
 @hydra.main(

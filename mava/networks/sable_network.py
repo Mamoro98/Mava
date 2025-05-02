@@ -367,6 +367,7 @@ class Decoder(nn.Module):
         ]
 
         #TODO I should change this later
+        #Optional: out of the scope 
         self.log_std = (
             self.param("log_std", nn.initializers.zeros, (self.tasks_action_dims[0],))
             if self.tasks_action_space_type[0] == _CONTINUOUS
@@ -491,7 +492,7 @@ class SableNetwork(nn.Module):
             self.n_agents_per_chunk,
             self.num_tasks,
         )
-        self.decoder = Decoder(
+        self.decoder = Decoder( 
             self.net_config,
             self.memory_config,
             self.n_agents_per_chunk,
@@ -510,23 +511,34 @@ class SableNetwork(nn.Module):
             chunk_size=self.n_agents_per_chunk,
         )
         # TODO what if the action space is cont ?  or what if i got mixed action spaces? probably move this condions to the __call function 
-        if self.task_action_space_types[0] == _CONTINUOUS:
-            self.train_decoder_fn = partial(
-                continuous_train_decoder_fn,
-                n_agents=self.n_agents,
-                chunk_size=self.memory_config.chunk_size,
-                action_dim=self.task_action_dims[0],
-            )
-            self.autoregressive_act = partial(
-                continuous_autoregressive_act, action_dim=self.task_action_dims[0]
-            )
-        else:
-            self.train_decoder_fn = partial(
+        # if self.task_action_space_types[0] == _CONTINUOUS:
+        #     self.train_decoder_fn = partial(
+        #         continuous_train_decoder_fn,
+        #         n_agents=self.n_agents,
+        #         chunk_size=self.memory_config.chunk_size,
+        #         action_dim=self.task_action_dims[0],
+        #     )
+        #     self.autoregressive_act = partial(
+        #         continuous_autoregressive_act, action_dim=self.task_action_dims[0]
+        #     )
+        # else:
+        #TODO: define this per task
+
+        self.train_decoder_fn = [
+            partial(
                 discrete_train_decoder_fn,
                 n_agents=self.n_agents,
                 chunk_size=self.memory_config.chunk_size,
             )
-            self.autoregressive_act = discrete_autoregressive_act  # type: ignore
+            for _ in range(self.num_tasks)
+        ]
+
+        self.autoregressive_act = [
+            discrete_autoregressive_act
+            for _ in range(self.num_tasks)
+        ]
+
+
 
     def __call__(
         self,
@@ -543,16 +555,12 @@ class SableNetwork(nn.Module):
             observation.action_mask,
             observation.step_count,
         )
-        # 
-        # for enc in self.encoder.task_obs_encoders:
-        #   _ = enc(obs) 
-        #   
 
         value, obs_rep, _ = self.train_encoder_fn(
             encoder=self.encoder, obs=obs, hstate=hstates[0], dones=dones, step_count=step_count,task_id=task_id
         )
 
-        action_log, entropy = self.train_decoder_fn(
+        action_log, entropy = self.train_decoder_fn[task_id](
             decoder=self.decoder,
             obs_rep=obs_rep,
             action=action,
@@ -592,7 +600,7 @@ class SableNetwork(nn.Module):
             task_id=task_id
         )
 
-        output_actions, output_actions_log, updated_dec_hs = self.autoregressive_act(
+        output_actions, output_actions_log, updated_dec_hs = self.autoregressive_act[task_id](
             decoder=self.decoder,
             obs_rep=obs_rep,
             legal_actions=legal_actions,
@@ -614,41 +622,43 @@ class SableNetwork(nn.Module):
     @nn.compact
     def init_all_tasks(
       self,
-        observation: Observation,
-        hstates: HiddenStates,
+        observation: list[Observation],
+        hstates: list[HiddenStates],
         key: chex.PRNGKey,
         ) -> None: 
+        for i in range(len(observation)):
 
-        obs, legal_actions, step_count = (
-            observation.agents_view,
-            observation.action_mask,
-            observation.step_count,
-        )
+            obs, legal_actions, step_count = (
+                observation[i].agents_view,
+                observation[i].action_mask,
+                observation[i].step_count,
+            )
 
-        decayed_hstates = tree.map(lambda x: x * self.decay_kappas, hstates)
-        for task_id in range(len(self.encoder.task_obs_encoders)):
+            decayed_hstates = tree.map(lambda x: x * self.decay_kappas, hstates[i])
+        # for task_id in range(len(self.encoder.task_obs_encoders)):
+
             value, obs_rep, updated_enc_hs = self.act_encoder_fn(
                     encoder=self.encoder,
                     obs=obs,
                     decayed_hstate=decayed_hstates[0],
                     step_count=step_count,
-                    task_id=task_id
+                    task_id=i
                 )
-        for task_id in range(len(self.decoder.task_policy_heads)):
-            output_actions, output_actions_log, updated_dec_hs = self.autoregressive_act(
+            
+            output_actions, output_actions_log, updated_dec_hs = self.autoregressive_act[i](
                 decoder=self.decoder,
                 obs_rep=obs_rep,
                 legal_actions=legal_actions,
                 hstates=decayed_hstates[1:],
                 step_count=step_count,
                 key=key,
-                task_id = task_id,
+                task_id = i,
             )
 
-        updated_hs = HiddenStates(
-            encoder=updated_enc_hs,
-            decoder_self_retn=updated_dec_hs[0],
-            decoder_cross_retn=updated_dec_hs[1],
-        )
+            updated_hs = HiddenStates(
+                encoder=updated_enc_hs,
+                decoder_self_retn=updated_dec_hs[0],
+                decoder_cross_retn=updated_dec_hs[1],
+            )
 
-        
+            

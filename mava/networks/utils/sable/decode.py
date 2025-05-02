@@ -54,8 +54,11 @@ def discrete_train_decoder_fn(
 
     shifted_actions = get_shifted_discrete_actions(action, legal_actions, n_agents=n_agents)
     logit = jnp.zeros_like(legal_actions, dtype=jnp.float32)
-
+    #[t0a0,t0a1,t0a2,t1a0,t1a1,t1a2,t2a0,t2a1,t2a2] chunksize =9
+    #chunk=3
+    #num_chunks=3
     # Apply the decoder per chunk
+    # we need to decide chunk size per task 
     num_chunks = shifted_actions.shape[1] // chunk_size
     for chunk_id in range(0, num_chunks):
         start_idx = chunk_id * chunk_size
