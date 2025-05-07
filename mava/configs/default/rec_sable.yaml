@@ -4,20 +4,20 @@ defaults:
   - system: sable/rec_sable
   - network: rec_retention
   - env: multiagent # [cleaner, connector, vector-connector, gigastep, lbf, matrax, rware, smax, mpe]
-  # - system/search_spaces@hydra.sweeper.params: rec_sable_tuning
-  # - override hydra/sweeper: optuna
-  # - override hydra/sweeper/sampler: tpe
+  - system/search_spaces@hydra.sweeper.params: rec_sable_tuning
+  - override hydra/sweeper: optuna
+  - override hydra/sweeper/sampler: tpe
   - _self_
 
 hydra:
   searchpath:
     - file://mava/configs
-  # mode: MULTIRUN
-  # sweeper: 
-  #       sampler:
-  #           seed: 42
-  #       direction: maximize
-  #       study_name: sweep
-  #       storage: null
-  #       n_trials: 15
-  #       n_jobs: 1 
+  mode: MULTIRUN
+  sweeper: 
+        sampler:
+            seed: 42
+        direction: maximize
+        study_name: sweep
+        storage: null
+        n_trials: 15
+        n_jobs: 1 
