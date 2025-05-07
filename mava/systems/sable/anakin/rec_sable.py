@@ -457,10 +457,8 @@ def learner_setup(
     n_devices = len(jax.devices())
     num_tasks = len(envs)
     all_num_agents = [env.num_agents for env in envs]
-    max_n_agents = max(all_num_agents)
     # Get number of agents.
-    config.system.num_agents = max_n_agents
-    env_for_spec = envs[0]
+    config.system.num_agents = all_num_agents
 
     # PRNG keys.
     key, net_key = keys
@@ -476,22 +474,22 @@ def learner_setup(
         task_action_space_types.append(task_act_type)
 
     # action_dim = env_for_spec.action_dim
-    n_agents = max_n_agents
 
     # Setting the chunksize - smaller chunks save memory at the cost of speed
-    if config.network.memory_config.timestep_chunk_size:
-        config.network.memory_config.chunk_size = (
-            config.network.memory_config.timestep_chunk_size * n_agents
-        )
-    else:
-        config.network.memory_config.chunk_size = config.system.rollout_length * n_agents
+    # if config.network.memory_config.timestep_chunk_size:
+    #     config.network.memory_config.chunk_size.append(
+    #         config.network.memory_config.timestep_chunk_size * n_agents
+    #     )
+    # else:
+    for i in range(num_tasks):
+        config.network.memory_config.chunk_size.append(config.system.rollout_length * all_num_agents[i])
 
     # _, action_space_type = get_action_head(env_for_spec.action_spec)
 
     # Define network.
     sable_network = SableNetwork(
-        n_agents=n_agents,
-        n_agents_per_chunk=n_agents,
+        all_n_agents=all_num_agents,
+        n_agents_per_chunk=all_num_agents,
         task_action_dims=task_action_dims,
         net_config=config.network.net_config,
         memory_config=config.network.memory_config,
