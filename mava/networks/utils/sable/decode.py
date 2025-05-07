@@ -33,7 +33,6 @@ from mava.networks.distributions import TanhTransformedDistribution
 _MIN_SCALE = 1e-3
 
 
-# TODO understand and change the shifted action function
 
 def discrete_train_decoder_fn(
     decoder: nn.Module,
@@ -59,10 +58,10 @@ def discrete_train_decoder_fn(
     #num_chunks=3
     # Apply the decoder per chunk
     # we need to decide chunk size per task 
-    num_chunks = shifted_actions.shape[1] // chunk_size
+    num_chunks = shifted_actions.shape[1] // chunk_size[task_id]
     for chunk_id in range(0, num_chunks):
-        start_idx = chunk_id * chunk_size
-        end_idx = (chunk_id + 1) * chunk_size
+        start_idx = chunk_id * chunk_size[task_id]
+        end_idx = (chunk_id + 1) * chunk_size[task_id]
         # Chunk obs_rep, shifted_actions, dones, and step_count
         chunked_obs_rep = obs_rep[:, start_idx:end_idx]
         chunk_shifted_actions = shifted_actions[:, start_idx:end_idx]

@@ -66,7 +66,6 @@ def get_learner_fn(
     # Get apply functions for executing and training the network.
     sable_action_select_fn, sable_apply_fn = apply_fns
     num_envs = config.arch.num_envs
-    max_n_agents = config.system.num_agents 
 
 
     def _update_step(learner_state: LearnerState, _: Any) -> Tuple[LearnerState, Tuple]:
@@ -185,7 +184,7 @@ def get_learner_fn(
             )
             
             # last_done = last_timestep_new.last().repeat(env.num_agents).reshape(num_envs, -1)
-            last_done = jax.vmap(lambda x: x.repeat(config.system.num_agents, axis=-1))(last_timestep_new.last())
+            last_done = jax.vmap(lambda x: x.repeat(config.system.num_agents[i], axis=-1))(last_timestep_new.last())
             # print("heeeeeeeeer")
             def _calculate_gae(
                 traj_batch: Transition,
@@ -342,7 +341,7 @@ def get_learner_fn(
                 prev_hstates_new = tree.map(lambda x: jnp.take(x, batch_perm, axis=0), prev_hstates[i])
 
                 # Shuffle agents
-                agent_perm = jax.random.permutation(agent_shuffle_key, config.system.num_agents)
+                agent_perm = jax.random.permutation(agent_shuffle_key, config.system.num_agents[i])
                 batch = tree.map(lambda x: jnp.take(x, agent_perm, axis=2), batch)
 
                 # Concatenate time and agents

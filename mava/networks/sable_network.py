@@ -134,7 +134,7 @@ class EncodeBlock(nn.Module):
     def setup(self) -> None:
         self.ln1 = nn.RMSNorm()
         self.ln2 = nn.RMSNorm()
-
+        # should i make this a list of retentions ?
         self.retn = MultiScaleRetention(
             embed_dim=self.net_config.embed_dim,
             n_head=self.net_config.n_head,
@@ -172,7 +172,7 @@ class Encoder(nn.Module):
 
     net_config: SableNetworkConfig
     memory_config: DictConfig
-    n_agents: int
+    n_agents: list
     num_tasks: int
 
 
@@ -366,7 +366,7 @@ class Decoder(nn.Module):
             ) for task_id in range(self.num_tasks) 
         ]
 
-        #TODO I should change this later
+
         #Optional: out of the scope 
         self.log_std = (
             self.param("log_std", nn.initializers.zeros, (self.tasks_action_dims[0],))
@@ -462,8 +462,8 @@ class Decoder(nn.Module):
 class SableNetwork(nn.Module):
     """Sable network module."""
 
-    n_agents: int
-    n_agents_per_chunk: int
+    all_n_agents: tuple
+    n_agents_per_chunk: tuple
     task_action_dims: list
     net_config: SableNetworkConfig
     memory_config: DictConfig
@@ -510,24 +510,11 @@ class SableNetwork(nn.Module):
             act_encoder_fn,
             chunk_size=self.n_agents_per_chunk,
         )
-        # TODO what if the action space is cont ?  or what if i got mixed action spaces? probably move this condions to the __call function 
-        # if self.task_action_space_types[0] == _CONTINUOUS:
-        #     self.train_decoder_fn = partial(
-        #         continuous_train_decoder_fn,
-        #         n_agents=self.n_agents,
-        #         chunk_size=self.memory_config.chunk_size,
-        #         action_dim=self.task_action_dims[0],
-        #     )
-        #     self.autoregressive_act = partial(
-        #         continuous_autoregressive_act, action_dim=self.task_action_dims[0]
-        #     )
-        # else:
-        #TODO: define this per task
 
         self.train_decoder_fn = [
             partial(
                 discrete_train_decoder_fn,
-                n_agents=self.n_agents,
+                n_agents=self.all_n_agents[_],
                 chunk_size=self.memory_config.chunk_size,
             )
             for _ in range(self.num_tasks)
@@ -635,7 +622,6 @@ class SableNetwork(nn.Module):
             )
 
             decayed_hstates = tree.map(lambda x: x * self.decay_kappas, hstates[i])
-        # for task_id in range(len(self.encoder.task_obs_encoders)):
 
             value, obs_rep, updated_enc_hs = self.act_encoder_fn(
                     encoder=self.encoder,

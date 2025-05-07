@@ -39,10 +39,10 @@ def train_encoder_fn(
     obs_rep = jnp.zeros((B, S, encoder.net_config.embed_dim))
 
     # Apply the encoder per chunk
-    num_chunks = S // chunk_size
+    num_chunks = S // chunk_size[task_id]
     for chunk_id in range(0, num_chunks):
-        start_idx = chunk_id * chunk_size
-        end_idx = (chunk_id + 1) * chunk_size
+        start_idx = chunk_id * chunk_size[task_id]
+        end_idx = (chunk_id + 1) * chunk_size[task_id]
         # Chunk obs, dones, and step_count
         chunk_obs = obs[:, start_idx:end_idx]
         chunk_dones = dones[:, start_idx:end_idx]
@@ -70,10 +70,10 @@ def act_encoder_fn(
     obs_rep = jnp.zeros((B, C, encoder.net_config.embed_dim))
 
     # Apply the encoder per chunk
-    num_chunks = C // chunk_size
+    num_chunks = C // chunk_size[task_id]
     for chunk_id in range(0, num_chunks):
-        start_idx = chunk_id * chunk_size
-        end_idx = (chunk_id + 1) * chunk_size
+        start_idx = chunk_id * chunk_size[task_id]
+        end_idx = (chunk_id + 1) * chunk_size[task_id]
         # Chunk obs and step_count
         chunk_obs = obs[:, start_idx:end_idx]
         chunk_step_count = step_count[:, start_idx:end_idx]
