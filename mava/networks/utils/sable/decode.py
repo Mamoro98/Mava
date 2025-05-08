@@ -122,7 +122,7 @@ def discrete_autoregressive_act(
     legal_actions: chex.Array,
     step_count: chex.Array,
     key: chex.PRNGKey,
-    task_id: int,
+    task_id: int
 ) -> Tuple[chex.Array, chex.Array, chex.Array]:
     B, N, A = legal_actions.shape
 
@@ -139,7 +139,7 @@ def discrete_autoregressive_act(
             obs_rep=obs_rep[:, i : i + 1, :],
             hstates=hstates,
             step_count=step_count[:, i : i + 1],
-            task_id = task_id,
+            task_id = task_id
         )
         masked_logits = jnp.where(
             legal_actions[:, i : i + 1, :],

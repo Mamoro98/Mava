@@ -40,7 +40,7 @@ class SimpleRetention(nn.Module):
 
     embed_dim: int
     head_size: int
-    n_agents: int
+    all_n_agents_list: list[int] 
     masked: bool
     decay_kappa: float  # this is gamma in the original retention implementation
     memory_config: DictConfig
@@ -64,10 +64,11 @@ class SimpleRetention(nn.Module):
         )
 
     def __call__(
-        self, key: Array, query: Array, value: Array, hstate: Array, dones: Array
+        self, key: Array, query: Array, value: Array, hstate: Array, dones: Array, task_id: int
     ) -> Tuple[Array, Array]:
         """Chunkwise (default) representation of the retention mechanism."""
         B, C, _ = value.shape
+        n_agents_for_task = self.all_n_agents_list[task_id] 
 
         # Apply projection to q_proj, k_proj, v_proj
         q_proj = query @ self.w_q
@@ -83,10 +84,10 @@ class SimpleRetention(nn.Module):
             xi = jnp.ones((B, C, 1))
             next_hstate = (k_proj @ v_proj) + hstate
         else:
-            decay_matrix = self.get_decay_matrix(dones)
-            xi = self.get_xi(dones)
-            chunk_decay = self.decay_kappa ** (C // self.n_agents)
-            delta = ~jnp.any(dones[:, :: self.n_agents], axis=1)[:, jnp.newaxis, jnp.newaxis]
+            decay_matrix = self.get_decay_matrix(dones,n_agents_for_task)
+            xi = self.get_xi(dones, n_agents_for_task)
+            chunk_decay = self.decay_kappa ** (C // n_agents_for_task)
+            delta = ~jnp.any(dones[:, :: n_agents_for_task], axis=1)[:, jnp.newaxis, jnp.newaxis]
             next_hstate = (
                 k_proj @ (v_proj * decay_matrix[:, -1].reshape((B, C, 1)))
             ) + hstate * chunk_decay * delta
@@ -114,10 +115,10 @@ class SimpleRetention(nn.Module):
 
         return ret, updated_hstate
 
-    def get_decay_matrix(self, dones: Array) -> Array:
+    def get_decay_matrix(self, dones: Array, n_agents_for_task: int) -> Array:
         """Get the decay matrix for the full sequence based on the dones and retention type."""
         # Extract done information at the timestep level
-        timestep_dones = dones[:, :: self.n_agents]  # B, T
+        timestep_dones = dones[:, :: n_agents_for_task]  # B, T
 
         # B, T, T
         timestep_mask = self._get_decay_matrix_mask_timestep(timestep_dones)
@@ -126,7 +127,7 @@ class SimpleRetention(nn.Module):
 
         # B, T, T ->  B, T * N, T * N
         decay_matrix = jnp.repeat(
-            jnp.repeat(decay_matrix, self.n_agents, axis=1), self.n_agents, axis=2
+            jnp.repeat(decay_matrix, n_agents_for_task, axis=1), n_agents_for_task, axis=2
         )
 
         # Apply a causal mask over agents if full self-retention is disabled
@@ -186,10 +187,10 @@ class SimpleRetention(nn.Module):
 
         return decay_matrix
 
-    def get_xi(self, dones: Array) -> Array:
+    def get_xi(self, dones: Array, n_agents_for_task: int) -> Array:
         """Computes a decaying matrix 'xi', which decays over time until the first done signal."""
         # Get done status for each timestep by slicing out the agent dimension
-        timestep_dones = dones[:, :: self.n_agents]
+        timestep_dones = dones[:, :: n_agents_for_task]
         B, T = timestep_dones.shape
 
         # Compute the first done step for each sequence,
@@ -208,7 +209,7 @@ class SimpleRetention(nn.Module):
             xi = xi.at[:, i, :].set(xi_i)
 
         # Repeat the decay matrix 'xi' for all agents
-        xi = jnp.repeat(xi, self.n_agents, axis=1)
+        xi = jnp.repeat(xi, n_agents_for_task, axis=1)
 
         return xi
 
@@ -218,7 +219,7 @@ class MultiScaleRetention(nn.Module):
 
     embed_dim: int
     n_head: int
-    n_agents: int
+    all_n_agents_list: list[int]
     memory_config: DictConfig
     masked: bool = True
     decay_scaling_factor: float = 1.0
@@ -251,7 +252,7 @@ class MultiScaleRetention(nn.Module):
             SimpleRetention(
                 self.embed_dim,
                 self.head_size,
-                self.n_agents,
+                self.all_n_agents_list,
                 self.masked,
                 decay_kappa,
                 self.memory_config,
@@ -270,6 +271,7 @@ class MultiScaleRetention(nn.Module):
         hstate: Array,
         dones: Array,
         step_count: Array,
+        task_id: int,
     ) -> Tuple[Array, Array]:
         """Chunkwise (default) representation of the multi-scale retention mechanism"""
         B, C, _ = value.shape
@@ -280,7 +282,7 @@ class MultiScaleRetention(nn.Module):
 
         ret_output = jnp.zeros((B, C, self.embed_dim), dtype=value.dtype)
         for head in range(self.n_head):
-            y, new_hs = self.retention_heads[head](key, query, value, hstate[:, head], dones)
+            y, new_hs = self.retention_heads[head](key, query, value, hstate[:, head], dones,task_id)
             ret_output = ret_output.at[
                 :, :, self.head_size * head : self.head_size * (head + 1)
             ].set(y)

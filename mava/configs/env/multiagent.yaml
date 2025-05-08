@@ -8,10 +8,10 @@ scenario:
   task_config: {} 
 
 tasks:
-  - name: tiny-4ag
+  - name: 15x15-3p-5f
     scenario_key: env.scenario.name 
-    scenario_value: RobotWarehouse-v0
-    scenario_file_name: tiny-4ag 
+    scenario_value: LevelBasedForaging-v0
+    scenario_file_name: 15x15-3p-5f
 
   - name: 15x15-4p-3f
     scenario_key: env.scenario.name 
@@ -19,7 +19,7 @@ tasks:
     scenario_file_name: 15x15-4p-3f 
 
 envs_name: 
-  - name: RobotWarehouse  
+  - name: LevelBasedForaging
   - name: LevelBasedForaging
 eval_metric: episode_return
 implicit_agent_id: False

@@ -129,7 +129,7 @@ class EncodeBlock(nn.Module):
 
     net_config: SableNetworkConfig
     memory_config: DictConfig
-    n_agents: int
+    all_n_agents_list: list[int]
 
     def setup(self) -> None:
         self.ln1 = nn.RMSNorm()
@@ -138,7 +138,7 @@ class EncodeBlock(nn.Module):
         self.retn = MultiScaleRetention(
             embed_dim=self.net_config.embed_dim,
             n_head=self.net_config.n_head,
-            n_agents=self.n_agents,
+            all_n_agents_list=self.all_n_agents_list, # MODIFIED: pass the list
             masked=False,  # Full retention for the encoder
             memory_config=self.memory_config,
             decay_scaling_factor=self.memory_config.decay_scaling_factor,
@@ -147,17 +147,17 @@ class EncodeBlock(nn.Module):
         self.ffn = SwiGLU(self.net_config.embed_dim, self.net_config.embed_dim)
 
     def __call__(
-        self, x: chex.Array, hstate: chex.Array, dones: chex.Array, step_count: chex.Array
+        self, x: chex.Array, hstate: chex.Array, dones: chex.Array, step_count: chex.Array, task_id: int,
     ) -> chex.Array:
         """Applies Chunkwise MultiScaleRetention."""
         ret, updated_hstate = self.retn(
-            key=x, query=x, value=x, hstate=hstate, dones=dones, step_count=step_count
+            key=x, query=x, value=x, hstate=hstate, dones=dones, step_count=step_count, task_id=task_id
         )
         x = self.ln1(x + ret)
         output = self.ln2(x + self.ffn(x))
         return output, updated_hstate
 
-    def recurrent(self, x: chex.Array, hstate: chex.Array, step_count: chex.Array) -> chex.Array:
+    def recurrent(self, x: chex.Array, hstate: chex.Array, step_count: chex.Array, task_id: int) -> chex.Array:
         """Applies Recurrent MultiScaleRetention."""
         ret, updated_hstate = self.retn.recurrent(
             key_n=x, query_n=x, value_n=x, hstate=hstate, step_count=step_count
@@ -172,7 +172,7 @@ class Encoder(nn.Module):
 
     net_config: SableNetworkConfig
     memory_config: DictConfig
-    n_agents: list
+    all_n_agents_list: list[int]
     num_tasks: int
 
 
@@ -195,7 +195,7 @@ class Encoder(nn.Module):
             EncodeBlock(
                 self.net_config,
                 self.memory_config,
-                self.n_agents,
+                self.all_n_agents_list, 
                 name=f"encoder_block_{block_id}",
             )
             for block_id in range(self.net_config.n_block)
@@ -215,7 +215,7 @@ class Encoder(nn.Module):
         for i, block in enumerate(self.blocks):
             hs = hstate[:, :, i]  # Get the hidden state for the current block
             # Apply the chunkwise encoder block
-            obs_rep, hs_new = block(self.ln(obs_rep), hs, dones, step_count)
+            obs_rep, hs_new = block(self.ln(obs_rep), hs, dones, step_count,task_id)
             updated_hstate = updated_hstate.at[:, :, i].set(hs_new)
         
         
@@ -245,7 +245,7 @@ class Encoder(nn.Module):
         for i, block in enumerate(self.blocks):
             hs = hstate[:, :, i]  # Get the hidden state for the current block
             # Apply the recurrent encoder block
-            obs_rep, hs_new = block.recurrent(self.ln(obs_rep), hs, step_count)
+            obs_rep, hs_new = block.recurrent(self.ln(obs_rep), hs, step_count, task_id)
             updated_hstate = updated_hstate.at[:, :, i].set(hs_new)
 
         # Compute the value function
@@ -263,7 +263,7 @@ class DecodeBlock(nn.Module):
 
     net_config: SableNetworkConfig
     memory_config: DictConfig
-    n_agents: int
+    all_n_agents_list: list[int]
 
     def setup(self) -> None:
         self.ln1, self.ln2, self.ln3 = nn.RMSNorm(), nn.RMSNorm(), nn.RMSNorm()
@@ -271,7 +271,7 @@ class DecodeBlock(nn.Module):
         self.retn1 = MultiScaleRetention(
             embed_dim=self.net_config.embed_dim,
             n_head=self.net_config.n_head,
-            n_agents=self.n_agents,
+            all_n_agents_list=self.all_n_agents_list,
             masked=True,  # Masked retention for the decoder
             memory_config=self.memory_config,
             decay_scaling_factor=self.memory_config.decay_scaling_factor,
@@ -279,7 +279,7 @@ class DecodeBlock(nn.Module):
         self.retn2 = MultiScaleRetention(
             embed_dim=self.net_config.embed_dim,
             n_head=self.net_config.n_head,
-            n_agents=self.n_agents,
+            all_n_agents_list=self.all_n_agents_list,
             masked=True,  # Masked retention for the decoder
             memory_config=self.memory_config,
             decay_scaling_factor=self.memory_config.decay_scaling_factor,
@@ -294,13 +294,14 @@ class DecodeBlock(nn.Module):
         hstates: Tuple[chex.Array, chex.Array],
         dones: chex.Array,
         step_count: chex.Array,
+        task_id: int,
     ) -> Tuple[chex.Array, Tuple[chex.Array, chex.Array]]:
         """Applies Chunkwise MultiScaleRetention."""
         hs1, hs2 = hstates
 
         # Apply the self-retention over actions
         ret, hs1_new = self.retn1(
-            key=x, query=x, value=x, hstate=hs1, dones=dones, step_count=step_count
+            key=x, query=x, value=x, hstate=hs1, dones=dones, step_count=step_count, task_id=task_id
         )
         ret = self.ln1(x + ret)
 
@@ -312,6 +313,7 @@ class DecodeBlock(nn.Module):
             hstate=hs2,
             dones=dones,
             step_count=step_count,
+            task_id=task_id
         )
         y = self.ln2(obs_rep + ret2)
         output = self.ln3(y + self.ffn(y))
@@ -324,19 +326,20 @@ class DecodeBlock(nn.Module):
         obs_rep: chex.Array,
         hstates: Tuple[chex.Array, chex.Array],
         step_count: chex.Array,
+        task_id: int
     ) -> Tuple[chex.Array, Tuple[chex.Array, chex.Array]]:
         """Applies Recurrent MultiScaleRetention."""
         hs1, hs2 = hstates
 
         # Apply the self-retention over actions
         ret, hs1_new = self.retn1.recurrent(
-            key_n=x, query_n=x, value_n=x, hstate=hs1, step_count=step_count
+            key_n=x, query_n=x, value_n=x, hstate=hs1, step_count=step_count,
         )
         ret = self.ln1(x + ret)
 
         # Apply the cross-retention over obs x action
         ret2, hs2_new = self.retn2.recurrent(
-            key_n=ret, query_n=obs_rep, value_n=ret, hstate=hs2, step_count=step_count
+            key_n=ret, query_n=obs_rep, value_n=ret, hstate=hs2, step_count=step_count,
         )
         y = self.ln2(obs_rep + ret2)
         output = self.ln3(y + self.ffn(y))
@@ -349,7 +352,7 @@ class Decoder(nn.Module):
 
     net_config: SableNetworkConfig
     memory_config: DictConfig
-    n_agents: int
+    all_n_agents_list: list[int]
     tasks_action_dims: list[int]
     num_tasks: int 
     tasks_action_space_type: list[str]
@@ -387,7 +390,7 @@ class Decoder(nn.Module):
             DecodeBlock(
                 self.net_config,
                 self.memory_config,
-                self.n_agents,
+                self.all_n_agents_list,
                 name=f"decoder_block_{block_id}",
             )
             for block_id in range(self.net_config.n_block)
@@ -414,7 +417,7 @@ class Decoder(nn.Module):
         # Apply the decoder blocks
         for i, block in enumerate(self.blocks):
             hs = tree.map(lambda x, j=i: x[:, :, j], hstates)
-            x, hs_new = block(x=x, obs_rep=obs_rep, hstates=hs, dones=dones, step_count=step_count)
+            x, hs_new = block(x=x, obs_rep=obs_rep, hstates=hs, dones=dones, step_count=step_count, task_id=task_id)
             updated_hstates = tree.map(
                 lambda x, y, j=i: x.at[:, :, j].set(y), updated_hstates, hs_new
             )
@@ -446,7 +449,7 @@ class Decoder(nn.Module):
         # Apply the decoder blocks
         for i, block in enumerate(self.blocks):
             hs = tree.map(lambda x, i=i: x[:, :, i], hstates)
-            x, hs_new = block.recurrent(x=x, obs_rep=obs_rep, hstates=hs, step_count=step_count)
+            x, hs_new = block.recurrent(x=x, obs_rep=obs_rep, hstates=hs, step_count=step_count, task_id=task_id)
             updated_hstates = tree.map(
                 lambda x, y, j=i: x.at[:, :, j].set(y), updated_hstates, hs_new
             )
