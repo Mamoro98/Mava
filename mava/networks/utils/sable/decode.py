@@ -125,6 +125,7 @@ def discrete_autoregressive_act(
     task_id: int
 ) -> Tuple[chex.Array, chex.Array, chex.Array]:
     B, N, A = legal_actions.shape
+    # print(f"legal actions",legal_actions.shape)
 
     shifted_actions = jnp.zeros((B, N, A + 1))
     shifted_actions = shifted_actions.at[:, 0, 0].set(1)

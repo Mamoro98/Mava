@@ -119,7 +119,7 @@ class SimpleRetention(nn.Module):
         """Get the decay matrix for the full sequence based on the dones and retention type."""
         # Extract done information at the timestep level
         timestep_dones = dones[:, :: n_agents_for_task]  # B, T
-
+        # print(f"number of agents",n_agents_for_task)
         # B, T, T
         timestep_mask = self._get_decay_matrix_mask_timestep(timestep_dones)
         decay_matrix = self._get_default_decay_matrix(timestep_dones)
