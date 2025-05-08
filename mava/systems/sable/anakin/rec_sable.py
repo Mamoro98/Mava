@@ -942,9 +942,13 @@ def hydra_entry_point(cfg: DictConfig) -> float:
     OmegaConf.set_struct(cfg, False)
 
     # Run experiment.
-    eval_performance = run_experiment(cfg)
-    print(f"{Fore.CYAN}{Style.BRIGHT}Rec Sable experiment completed{Style.RESET_ALL}")
-    return eval_performance
+    try:
+        eval_performance = run_experiment(cfg)
+        print(f"{Fore.CYAN}{Style.BRIGHT}Rec Sable experiment completed{Style.RESET_ALL}")
+        return eval_performance
+    except:
+        print(f"{Fore.BLACK}{Style.BRIGHT}Rec Sable experiment Could not run{Style.RESET_ALL}")
+        return -1
 
 
 if __name__ == "__main__":
