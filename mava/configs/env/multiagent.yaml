@@ -8,27 +8,31 @@ scenario:
   task_config: {} 
 
 tasks:
-  - name: tiny-4ag
+  - name: smacv2_5_units
     scenario_key: env.scenario.name 
-    scenario_value: RobotWarehouse-v0
-    scenario_file_name: tiny-4ag 
+    scenario_value: Smax
+    scenario_file_name: smacv2_5_units
 
-  - name: tiny-2ag
+  - name: smacv2_10_units
     scenario_key: env.scenario.name 
-    scenario_value: RobotWarehouse-v0
-    scenario_file_name: tiny-2ag 
+    scenario_value: Smax
+    scenario_file_name: smacv2_10_units
 
-  - name: small-4ag
+  - name: smacv2_20_units
     scenario_key: env.scenario.name 
-    scenario_value: RobotWarehouse-v0
-    scenario_file_name: small-4ag 
+    scenario_value: Smax
+    scenario_file_name: smacv2_20_units
 
-envs_name: 
-  - name: RobotWarehouse  
-  - name: RobotWarehouse
-  - name: RobotWarehouse
-eval_metric: episode_return
+envs_name:  
+  - name: Smax  
+  - name: Smax
+  - name: Smax
+
+eval_metric: win_rate
 implicit_agent_id: False
-log_win_rate: False
+log_win_rate: True
 kwargs:
-  time_limit: 500
+  # time_limit: 500
+  see_enemy_actions: True
+  walls_cause_death: True
+  attack_mode: "closest"
