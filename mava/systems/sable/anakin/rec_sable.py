@@ -700,22 +700,20 @@ def run_experiment(_config: DictConfig) -> float:
     for i, task_spec in enumerate(tasks_list): 
             
             task_name = task_spec.get('name', f'Unnamed Task {i+1}')
-            # scenario_file_stem = task_spec.get('scenario_file_name')
-            # scenario_file_path = os.path.join(scenario_base_path, f"{scenario_file_stem}.yaml")
-            # print(f"  Processing Task {i+1}/{len(tasks_list)}: {Style.BRIGHT}{task_name}{Style.RESET_ALL}")
-            # scenario_cfg = OmegaConf.load(scenario_file_path)
+            scenario_file_stem = task_spec.get('scenario_file_name')
+            scenario_file_path = os.path.join(scenario_base_path, f"{scenario_file_stem}.yaml")
+            print(f"  Processing Task {i+1}/{len(tasks_list)}: {Style.BRIGHT}{task_name}{Style.RESET_ALL}")
+            scenario_cfg = OmegaConf.load(scenario_file_path)
             task_cfg = copy.deepcopy(config)
             OmegaConf.set_struct(task_cfg, False)
 
 
 
-            task_cfg['env']['scenario']['name'] = "HeuristicEnemySMAX"
-            task_cfg['env']['scenario']['task_name'] = task_name
-            
-            # scenario_key = task_spec.get('scenario_key')
-            # scenario_value = task_spec.get('scenario_value')
+            task_cfg['env']['scenario']['task_config'] = scenario_cfg['task_config']
+            scenario_key = task_spec.get('scenario_key')
+            scenario_value = task_spec.get('scenario_value')
 
-            # OmegaConf.update(task_cfg, scenario_key, scenario_value, merge=True)
+            OmegaConf.update(task_cfg, scenario_key, scenario_value, merge=True)
             OmegaConf.update(task_cfg.env.scenario, "env_kwargs", {}, merge=True)
 
             task_cfg['env']['env_name'] = task_cfg['env']['envs_name'][i]['name'] 

@@ -8,31 +8,28 @@ scenario:
   task_config: {} 
 
 tasks:
-  - name: smacv2_5_units
+  - name: con-5x5x3a
     scenario_key: env.scenario.name 
-    scenario_value: Smax
-    scenario_file_name: smacv2_5_units
+    scenario_value: Connector-v2
+    scenario_file_name: con-5x5x3a
 
-  - name: smacv2_10_units
+  - name: con-10x10x10a
     scenario_key: env.scenario.name 
-    scenario_value: Smax
-    scenario_file_name: smacv2_10_units
+    scenario_value: Connector-v2
+    scenario_file_name: con-10x10x10a
 
-  - name: smacv2_20_units
+  - name: con-15x15x23a
     scenario_key: env.scenario.name 
-    scenario_value: Smax
-    scenario_file_name: smacv2_20_units
+    scenario_value: Connector-v2
+    scenario_file_name: con-15x15x23a
 
 envs_name:  
-  - name: Smax  
-  - name: Smax
-  - name: Smax
-
-eval_metric: win_rate
+  - name: VectorConnector  
+  - name: VectorConnector
+  - name: VectorConnector
+eval_metric: episode_return
 implicit_agent_id: False
 log_win_rate: True
+aggregate_rewards: True
 kwargs:
-  # time_limit: 500
-  see_enemy_actions: True
-  walls_cause_death: True
-  attack_mode: "closest"
+  {}
