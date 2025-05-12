@@ -365,7 +365,7 @@ class VectorConnectorWrapper(JumanjiMarlWrapper):
     """
 
     def __init__(
-        self, env: Connector, add_global_state: bool = False, aggregate_rewards: bool = True
+        self, env: Connector, max_grid_dimension:int ,add_global_state: bool = False, aggregate_rewards: bool = True, 
     ):
         self.fov = 2
         super().__init__(env, add_global_state)
@@ -373,6 +373,7 @@ class VectorConnectorWrapper(JumanjiMarlWrapper):
         self._aggregate_rewards = aggregate_rewards
         self.agent_ids = jnp.arange(self.num_agents)
 
+        self.normalizer = max_grid_dimension
     def modify_timestep(self, timestep: TimeStep) -> TimeStep[Observation]:
         """Modify the timestep for the Connector environment."""
 
@@ -408,8 +409,8 @@ class VectorConnectorWrapper(JumanjiMarlWrapper):
                 )
                 blockers_around_agent = jnp.reshape(blockers_around_agent, -1).astype(float)
 
-                my_pos = position_coords[i] / grid[0].size
-                my_target = target_coords[i] / grid[0].size
+                my_pos = position_coords[i] / self.normalizer
+                my_target = target_coords[i] / self.normalizer
 
                 padded_combined_targets = jnp.pad(
                     combined_targets[i], self.fov, constant_values=True

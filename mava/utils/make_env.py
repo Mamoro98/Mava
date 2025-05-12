@@ -117,6 +117,7 @@ def make_jumanji_env(config: DictConfig, add_global_state: bool = False) -> Tupl
 
     """
     # Config generator and select the wrapper.
+    max_grid_dimension = config.env.scenario.get("max_grid_dimension",{})
     generator = _jumanji_registry[config.env.env_name]["generator"]
     generator = generator(**config.env.scenario.task_config)
     wrapper = _jumanji_registry[config.env.env_name]["wrapper"]
@@ -125,8 +126,9 @@ def make_jumanji_env(config: DictConfig, add_global_state: bool = False) -> Tupl
     env_config = {**config.env.kwargs, **config.env.scenario.env_kwargs}
     train_env = jumanji.make(config.env.scenario.name, generator=generator, **env_config)
     eval_env = jumanji.make(config.env.scenario.name, generator=generator, **env_config)
-    train_env = wrapper(train_env, add_global_state=add_global_state)
-    eval_env = wrapper(eval_env, add_global_state=add_global_state)
+    train_env = wrapper(train_env, max_grid_dimension=max_grid_dimension, add_global_state=add_global_state, # Pass the new arg
+)
+    eval_env = wrapper(eval_env, max_grid_dimension=max_grid_dimension, add_global_state=add_global_state,)
 
     train_env, eval_env = add_extra_wrappers(train_env, eval_env, config)
     return train_env, eval_env

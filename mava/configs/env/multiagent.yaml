@@ -6,6 +6,7 @@ scenario_config_path: mava/configs/env/scenario
 scenario: 
   name: "placeholder" 
   task_config: {} 
+  max_grid_dimension: 15
 
 tasks:
   - name: con-5x5x3a
