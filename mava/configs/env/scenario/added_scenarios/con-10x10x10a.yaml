@@ -7,4 +7,4 @@ task_config:
   num_agents: 10
 
 env_kwargs:
-  time_limit: 225
+  time_limit: 100

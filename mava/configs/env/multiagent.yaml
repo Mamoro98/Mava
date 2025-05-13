@@ -1,7 +1,7 @@
 defaults:
   - _self_
   
-scenario_config_path: mava/configs/env/scenario 
+scenario_config_path: mava/configs/env/scenario/added_scenarios 
 
 scenario: 
   name: "placeholder" 
@@ -15,10 +15,40 @@ tasks:
     scenario_value: Connector-v2
     scenario_file_name: con-5x5x3a
 
+  - name: con-7x7x5a
+    scenario_key: env.scenario.name 
+    scenario_value: Connector-v2
+    scenario_file_name: con-7x7x5a
+
+  - name: con-8x8x7a
+    scenario_key: env.scenario.name 
+    scenario_value: Connector-v2
+    scenario_file_name: con-8x8x7a
+
   - name: con-10x10x10a
     scenario_key: env.scenario.name 
     scenario_value: Connector-v2
     scenario_file_name: con-10x10x10a
+
+  - name: con-11x11x13a
+    scenario_key: env.scenario.name 
+    scenario_value: Connector-v2
+    scenario_file_name: con-11x11x13a
+
+  - name: con-12x12x15a
+    scenario_key: env.scenario.name 
+    scenario_value: Connector-v2
+    scenario_file_name: con-12x12x15a
+
+  - name: con-13x13x17a
+    scenario_key: env.scenario.name 
+    scenario_value: Connector-v2
+    scenario_file_name: con-13x13x17a
+
+  - name: con-14x14x21a
+    scenario_key: env.scenario.name 
+    scenario_value: Connector-v2
+    scenario_file_name: con-14x14x21a
 
   - name: con-15x15x23a
     scenario_key: env.scenario.name 
@@ -29,6 +59,15 @@ envs_name:
   - name: VectorConnector  
   - name: VectorConnector
   - name: VectorConnector
+  
+  - name: VectorConnector  
+  - name: VectorConnector
+  - name: VectorConnector
+  
+  - name: VectorConnector  
+  - name: VectorConnector
+  - name: VectorConnector
+  
 eval_metric: episode_return
 implicit_agent_id: False
 log_win_rate: True

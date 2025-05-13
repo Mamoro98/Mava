@@ -1,13 +1,13 @@
 # The config of the 15x15x23a scenario
 name: Connector-v2
-task_name: con-8x8x7a
+task_name: con-12x12x15a
 
 task_config:
-  grid_size: 8
-  num_agents: 7
+  grid_size: 12
+  num_agents: 15
 
 env_kwargs:
-  time_limit: 225
+  time_limit: 144
 
 
 # n_agents :  7, 10, 13, 15, 17, 21, 23

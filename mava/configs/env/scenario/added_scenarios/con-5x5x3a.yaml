@@ -7,4 +7,7 @@ task_config:
   num_agents: 3
 
 env_kwargs:
-  time_limit: 225
+  time_limit: 25
+
+# n_agents: 3, 5, 7, 10, 13, 15, 17, 21, 23
+# grid size: 5, 7, 8, 10, 11, 12, 13, 14, 15
