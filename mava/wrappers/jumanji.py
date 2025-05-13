@@ -365,7 +365,7 @@ class VectorConnectorWrapper(JumanjiMarlWrapper):
     """
 
     def __init__(
-        self, env: Connector, max_grid_dimension:int ,add_global_state: bool = False, aggregate_rewards: bool = True, 
+        self, env: Connector, max_grid_dimension:int, max_n_agents: int ,add_global_state: bool = False, aggregate_rewards: bool = True, 
     ):
         self.fov = 2
         super().__init__(env, add_global_state)

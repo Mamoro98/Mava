@@ -1,0 +1,14 @@
+# The config of the 15x15x23a scenario
+name: Connector-v2
+task_name: con-11x11x13a
+
+task_config:
+  grid_size: 11
+  num_agents: 13
+
+env_kwargs:
+  time_limit: 225
+
+
+# n_agents :  7, 10, 13, 15, 17, 21, 23
+# grid size:  8, 10, 11, 12, 13, 14, 15
