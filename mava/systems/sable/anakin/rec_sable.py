@@ -763,7 +763,8 @@ def run_experiment(_config: DictConfig) -> float:
 
         eval_env_instance = eval_envs[i]
         task_cfg_for_eval = task_cfg_list[i]
-        task_name = f'task_{i}'
+        task_name = tasks_list[i].get('name', f'Unnamed Task {i+1}')
+        # task_name = f'task_{i}'
 
 
         evaluator_fn = get_eval_fn(eval_env_instance, eval_act_fn, task_cfg_for_eval, absolute_metric=False)
