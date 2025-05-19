@@ -697,27 +697,78 @@ def run_experiment(_config: DictConfig) -> float:
 
     scenario_base_path = OmegaConf.select(config, "env.scenario_config_path", default=None)
     task_cfg_list = []
+
     for i, task_spec in enumerate(tasks_list): 
             
             task_name = task_spec.get('name', f'Unnamed Task {i+1}')
-            # scenario_file_stem = task_spec.get('scenario_file_name')
-            # scenario_file_path = os.path.join(scenario_base_path, f"{scenario_file_stem}.yaml")
-            # print(f"  Processing Task {i+1}/{len(tasks_list)}: {Style.BRIGHT}{task_name}{Style.RESET_ALL}")
-            # scenario_cfg = OmegaConf.load(scenario_file_path)
             task_cfg = copy.deepcopy(config)
             OmegaConf.set_struct(task_cfg, False)
+            env_name = task_cfg["env"]['envs_name'][i]['name']
 
-            task_cfg['env']['scenario']['name'] = "HeuristicEnemySMAX"
-            task_cfg['env']['scenario']['task_name'] = task_name
-            
-            # scenario_key = task_spec.get('scenario_key')
-            # scenario_value = task_spec.get('scenario_value')
+            print(f"  Processing Task {i+1}/{len(tasks_list)}: {Style.BRIGHT}{task_name}{Style.RESET_ALL}")
 
-            # OmegaConf.update(task_cfg, scenario_key, scenario_value, merge=True)
-            OmegaConf.update(task_cfg.env.scenario, "env_kwargs", {}, merge=True)
+
+            if env_name == "VectorConnector":
+                    
+                scenario_file_stem = task_spec.get('scenario_file_name')
+                scenario_file_path = os.path.join(scenario_base_path, f"{scenario_file_stem}.yaml")
+                scenario_cfg = OmegaConf.load(scenario_file_path)
+
+
+                task_cfg['env']['scenario']['task_config'] = scenario_cfg['task_config']
+                scenario_key = task_spec.get('scenario_key')
+                scenario_value = task_spec.get('scenario_value')
+
+                OmegaConf.update(task_cfg, scenario_key, scenario_value, merge=True)
+                OmegaConf.update(task_cfg.env.scenario, "env_kwargs", {}, merge=True)
+
+                task_cfg['env']['eval_metric'] = task_spec['eval_metric']
+                task_cfg['env']['log_win_rate'] = task_spec['log_win_rate']
+                task_cfg['env']['implicit_agent_id'] = task_spec['implicit_agent_id']
+                task_cfg['env']['aggregate_rewards'] = task_spec['aggregate_rewards']
+
+                task_cfg['env']['kwargs'] = task_spec['task_kwargs']
+
+            elif env_name == "Smax":
+                
+
+                task_cfg['env']['scenario']['name'] = "HeuristicEnemySMAX"
+                task_cfg['env']['scenario']['task_name'] = task_name
+
+                task_cfg['env']['eval_metric'] = task_spec['eval_metric']
+                task_cfg['env']['log_win_rate'] = task_spec['log_win_rate']
+                task_cfg['env']['implicit_agent_id'] = task_spec['implicit_agent_id']
+                task_cfg['env']['kwargs'] = task_spec['task_kwargs']
+               
+                OmegaConf.update(task_cfg.env.scenario, "env_kwargs", {}, merge=True)
+
+
+            else:
+
+                scenario_file_stem = task_spec.get('scenario_file_name')
+                scenario_file_path = os.path.join(scenario_base_path, f"{scenario_file_stem}.yaml")
+                scenario_cfg = OmegaConf.load(scenario_file_path)
+
+
+                task_cfg['env']['scenario']['task_config'] = scenario_cfg['task_config']
+                scenario_key = task_spec.get('scenario_key')
+                scenario_value = task_spec.get('scenario_value')
+                OmegaConf.update(task_cfg, scenario_key, scenario_value, merge=True)
+                OmegaConf.update(task_cfg.env.scenario, "env_kwargs", {}, merge=True)
+
+
+                task_cfg['env']['eval_metric'] = task_spec['eval_metric']
+                task_cfg['env']['log_win_rate'] = task_spec['log_win_rate']
+                task_cfg['env']['implicit_agent_id'] = task_spec['implicit_agent_id']
+                task_cfg['env']['kwargs'] = task_spec['task_kwargs']
+
+
+                    
 
             task_cfg['env']['env_name'] = task_cfg['env']['envs_name'][i]['name'] 
-                
+                    
+
+
             train_env, eval_env = environments.make(task_cfg)
             envs.append(train_env)
             eval_envs.append(eval_env)

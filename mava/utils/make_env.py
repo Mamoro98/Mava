@@ -127,9 +127,17 @@ def make_jumanji_env(config: DictConfig, add_global_state: bool = False) -> Tupl
     env_config = {**config.env.kwargs, **config.env.scenario.env_kwargs}
     train_env = jumanji.make(config.env.scenario.name, generator=generator, **env_config)
     eval_env = jumanji.make(config.env.scenario.name, generator=generator, **env_config)
-    train_env = wrapper(train_env, add_global_state=add_global_state, 
-)
-    eval_env = wrapper(eval_env,add_global_state=add_global_state,)
+
+
+    
+    if config['env']['env_name'] == 'VectorConnector':
+        train_env = wrapper(train_env, max_grid_dimension=max_grid_dimension,max_n_agents=max_n_agents, add_global_state=add_global_state, 
+    )
+        eval_env = wrapper(eval_env, max_grid_dimension=max_grid_dimension,max_n_agents=max_n_agents, add_global_state=add_global_state,)
+    else:
+         train_env = wrapper(train_env,  add_global_state=add_global_state, 
+    )
+         eval_env = wrapper(eval_env,  add_global_state=add_global_state,)
 
     train_env, eval_env = add_extra_wrappers(train_env, eval_env, config)
     return train_env, eval_env
