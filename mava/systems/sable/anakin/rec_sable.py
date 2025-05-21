@@ -390,7 +390,6 @@ def get_learner_fn(
                 for j in range(N_tasks):
                         traj_data_all_mbs_for_task, adv_data_all_mbs_for_task, targets_data_all_mbs_for_task = minibatches_list[j]
        
-                        # Slice out the current minibatch's data for this task
                         current_traj_data_mb = jax.tree_util.tree_map(
                             lambda leaf_all_mbs: leaf_all_mbs[i],
                             traj_data_all_mbs_for_task
@@ -398,7 +397,6 @@ def get_learner_fn(
                         current_adv_data_mb = adv_data_all_mbs_for_task[i]
                         current_targets_data_mb = targets_data_all_mbs_for_task[i]
                         
-                        # Get the hidden states for the current minibatch for this task
                         hs_data_all_mbs_for_task = prev_hs_minibatch_list[j]
                         current_hs_data_mb = jax.tree_util.tree_map(
                             lambda leaf_all_mbs: leaf_all_mbs[i],
@@ -407,23 +405,16 @@ def get_learner_fn(
                         
                         batch_info_single_mb_task = (current_traj_data_mb, current_adv_data_mb, current_targets_data_mb, current_hs_data_mb)
 
-                        # _update_minibatch is JIT-compiled (or part of a JIT-compiled chain)
-                        # It processes ONE minibatch for ONE task.
-                        # Its `update_fn` call will be handled by optax.MultiSteps.
-                        # (params, opt_states, key) are updated in place here.
+                     
                         (params, opt_states, key), loss_info_one_task_one_mb = _update_minibatch(
                             (params, opt_states, key), 
                             batch_info_single_mb_task,
                             task_id=j 
                         )
-                        # optax.MultiSteps inside _update_minibatch accumulates the gradient.
-                        # After N_tasks calls (i.e., at the end of this inner task_idx loop for a given mb_idx),
-                        # MultiSteps will apply an actual update to `params` and `opt_states`.
-
-                        # Accumulate losses (optional, for logging)
+                      
                         for k_loss, v_loss in loss_info_one_task_one_mb.items():
                             epoch_total_loss_sum[k_loss] += v_loss
-                        epoch_loss_count += 1 # Counts total number of (task, minibatch) pairs processed
+                        epoch_loss_count += 1
 
             final_epoch_avg_loss = {k: v / epoch_loss_count for k, v in epoch_total_loss_sum.items() if epoch_loss_count > 0}
 
@@ -489,13 +480,16 @@ def learner_setup(
     # Get available TPU cores.
     n_devices = len(jax.devices())
     num_tasks = len(envs)
+    # this will be used in the sable network for example -> retention to create a sperate decay matricies 
     all_num_agents = [env.num_agents for env in envs]
-    # Get number of agents.
+    
+    # save it in the config (the big one not the task specific one)
     config.system.num_agents = all_num_agents
 
     # PRNG keys.
     key, net_key = keys
-    # Get number of agents and actions.
+    
+    # get the action dims and action space type of each task -> used in sable network 
     task_action_dims = []
     task_action_space_types = []
     for i, env_task in enumerate(envs):
@@ -506,20 +500,21 @@ def learner_setup(
         task_action_dims.append(task_act_dim)
         task_action_space_types.append(task_act_type)
 
-    # action_dim = env_for_spec.action_dim
-
-    # Setting the chunksize - smaller chunks save memory at the cost of speed
-    # if config.network.memory_config.timestep_chunk_size:
-    #     config.network.memory_config.chunk_size.append(
-    #         config.network.memory_config.timestep_chunk_size * n_agents
-    #     )
-    # else:
+    # i created a list of the chunk sizes in the root config
+    # this list will be populated with the num_agents for each task multiplied by the rollout length 
+    # this list will be used to determine the chunk size for each task which will vary depending on the number of agents in the task
     for i in range(num_tasks):
         config.network.memory_config.chunk_size.append(config.system.rollout_length * all_num_agents[i])
 
-    # _, action_space_type = get_action_head(env_for_spec.action_spec)
 
     # Define network.
+    # sable network now will have
+    # all_num_agents -> list containing num of agents for each task
+    # task_action_dims -> list containing the action dim for each task
+    # config.network.net_config -> global network config -> num_blocks, embed_dim, n_heads
+    # config.network.memory_config -> global memory cfg -> decay_scaling_factor..etc -> this cfgs also contains the chunck sizes list
+    # task_action_space_types -> list containing the action spaces types -> all dicrete for now 
+    # num_tasks -> int -> how many tasks we are dealing with right now
     sable_network = SableNetwork(
         all_n_agents=all_num_agents,
         n_agents_per_chunk=all_num_agents,
@@ -532,20 +527,25 @@ def learner_setup(
     )
 
     # Define optimiser.
+    # the op
     lr = make_learning_rate(config.system.actor_lr, config)
-    # optim = optax.chain(
-    #     optax.clip_by_global_norm(config.system.max_grad_norm),
-    #     optax.adam(lr, eps=1e-5),
-    # )
+
+    # MultiStep -> wrapper -> taked the inner optimizer and change its behaviour 
     optim = MultiSteps(
+        # optax.chain -> it is like have a chain of optimizers -> sequentially executing the first one, then move to the next
         optax.chain(
+            # first transformation in the chain -> if the L2 norm of the entire gradient vector exceeds
+            # max_grad_norm -> clipping -> prevent exploding gradient 
             optax.clip_by_global_norm(config.system.max_grad_norm),
+            # second transformation -> Adam optimizer
             optax.adam(lr, eps=1e-5),
         ),
-        every_k_schedule=len(envs),  # Number of steps to accumulate
-        use_grad_mean=True  # Whether to average or sum gradients
+        # gradient accumilation happens every num_tasks -> the opt will step every n_tasks
+        every_k_schedule=len(envs),
+        # if true -> first we take the average of the graidents and then step using that avg -> emulate large batch size
+        # if false -> gradients for each num_task step will be summed 
+        use_grad_mean=True 
     )
-
 
     def pad_observation_object(
         obs ,
@@ -603,19 +603,28 @@ def learner_setup(
         )
 
 
+    # getting the initial observations and hidden states so we can initialize the params of the network
     inti_obs_list = []
     init_hs_list = []
     for idx in range(len(envs)):
-
+        # shape is Observation(agents_view=(10, 64), action_mask=(10, 5), step_count=(10,)) for the first task
+        # WARNING, it is different from task to task
         init_obs_unpadded = envs[idx].observation_spec.generate_value()
+        # adding a batch axis 
+        # Observation(agents_view=(1, 10, 64), action_mask=(1, 10, 5), step_count=(1, 10))
         init_obs = tree.map(lambda x: x[jnp.newaxis, ...], init_obs_unpadded)
         inti_obs_list.append(init_obs)
     
+        # HiddenStates(encoder=(64, 1, 4, 64, 64), decoder_self_retn=(64, 1, 4, 64, 64), decoder_cross_retn=(64, 1, 4, 64, 64))
         init_hs = get_init_hidden_state(config.network.net_config, config.arch.num_envs)
+
+
+        # HiddenStates(encoder=(1, 1, 4, 64, 64), decoder_self_retn=(1, 1, 4, 64, 64), decoder_cross_retn=(1, 1, 4, 64, 64))
+        # TODO why this is happening ?
         init_hs = tree.map(lambda x: x[0, jnp.newaxis], init_hs)
         init_hs_list.append(init_hs)
-    init_task_id = 0 
-    # Initialise params and optimiser state.
+
+    # Initialise params and optimiser state using the custom function
     params = sable_network.init(
         net_key,
         inti_obs_list,
@@ -624,16 +633,19 @@ def learner_setup(
         method="init_all_tasks",
     )
 
+    # init the optizer chain with the params
     opt_state = optim.init(params)
 
-    # Pack apply and update functions.
+    # now apply function is a tuple containing 2 functions -> get actions and call 
     apply_fns = (
-        partial(sable_network.apply, method="get_actions"),  # Execution function
-        sable_network.apply,  # Training function
+        partial(sable_network.apply, method="get_actions"),
+        sable_network.apply,
     )
 
     # Get batched iterated update and replicate it to pmap it over cores.
+    # TODO here
     learn = get_learner_fn(envs, apply_fns, optim.update, config)
+    # replicate learn function across devices
     learn = jax.pmap(learn, axis_name="device")
 
     # Initialise environment states and timesteps: across devices and batches.
@@ -641,7 +653,7 @@ def learner_setup(
         key, n_devices * config.system.update_batch_size * config.arch.num_envs + 1
     )
 
-    # DO this for all envs
+    
     states_list, timesteps_list = [], []
     num_envs_per_task_batch = config.arch.get('num_envs', 1) 
     num_update_batches = config.system.get('update_batch_size', 1) 
@@ -671,21 +683,6 @@ def learner_setup(
 
     for _ in range(len(envs)):
         init_hstates = get_init_hidden_state(config.network.net_config, config.arch.num_envs)
-
-        # Load model from checkpoint if specified.
-        
-        # if config.logger.checkpointing.load_model:
-        #     loaded_checkpoint = Checkpointer(
-        #         model_name=config.logger.system_name,
-        #         **config.logger.checkpointing.load_args,  # Other checkpoint args
-        #     )
-        #     # Restore the learner state from the checkpoint
-        #     restored_params, restored_hstates = loaded_checkpoint.restore_params(
-        #         input_params=params, restore_hstates=True, THiddenState=HiddenStates
-        #     )
-        #     # Update the params and hidden states
-        #     params = restored_params
-        #     init_hstates = restored_hstates if restored_hstates else init_hstates
 
         # Define params to be replicated across devices and batches.
         key, step_keys = jax.random.split(key)
@@ -719,6 +716,7 @@ def learner_setup(
 def run_experiment(_config: DictConfig) -> float:
     """Runs experiment."""
     _config.logger.system_name = "rec_sable"
+    # deep copy the config -> as it enter inside the config tree and extract each and every leave and copy it
     config = copy.deepcopy(_config) #
 
     n_devices = len(jax.devices())
@@ -727,46 +725,68 @@ def run_experiment(_config: DictConfig) -> float:
     eval_envs = []
     print(f"\n{Fore.CYAN}--- Creating Environments from Config Tasks ---{Style.RESET_ALL}")
 
-    
+    # config contains logger, arch, system, network, env -> each one of these contains the configuration of something 
+    # config.env contains the configs in the multiagent.yaml 
+    # config.env.task contains the tasks there -> specific configs for each task like the scenario file name .. etc
     tasks_list = OmegaConf.select(config, "env.tasks", default=None) 
-
+    
+    # get the scenario root path to access the scenario folder
     scenario_base_path = OmegaConf.select(config, "env.scenario_config_path", default=None)
+
+    # i will use this to store the task specific config and feed each one of these to the env.make
+    # doing so will enable me to give different task config in the same loop without changing the original files
     task_cfg_list = []
 
+    # looping through the tasks list in the multiagent.yaml file so i can get the task config for each env/task there
     for i, task_spec in enumerate(tasks_list): 
             
+            # get the task name
             task_name = task_spec.get('name', f'Unnamed Task {i+1}')
+
+            # init -> each task is a copy of the original config -> same logger, arch, system, network, env
             task_cfg = copy.deepcopy(config)
+
+            # this will allow me to change inside the task_cfg and make it changeable
             OmegaConf.set_struct(task_cfg, False)
+
+            # get the env name -> will help to know what env i am dealing with because different envs may have differet configs in the logger, arch, system, network, env
             env_name = task_cfg["env"]['envs_name'][i]['name']
 
             print(f"  Processing Task {i+1}/{len(tasks_list)}: {Style.BRIGHT}{task_name}{Style.RESET_ALL}")
 
-
+            # these if statements are specific for each env -> a better way to do it is to make functions that deals with each env 
+            # these functions can be here in this file -> then use switch so depending on the env name i will use the function
+            # the swtich should return the specific task_cfg of the specific env/task (probably env because i am switching based on the env_name)  
             if env_name == "VectorConnector":
-                    
+                # get scenario file name , join it with the scenarios path and load the scenario file
                 scenario_file_stem = task_spec.get('scenario_file_name')
                 scenario_file_path = os.path.join(scenario_base_path, f"{scenario_file_stem}.yaml")
                 scenario_cfg = OmegaConf.load(scenario_file_path)
 
-
+                # now scenario_cfg will contain the scenatio file , we want to add this scenario file to our task_cfg in a way env.make is comfortable with
                 task_cfg['env']['scenario']['task_config'] = scenario_cfg['task_config']
-                scenario_key = task_spec.get('scenario_key')
+
+                # scenario key is a way to access env.scenario.name 
+                # scenario value is the name of the env
+                scenario_key = task_spec.get('scenario_key') 
                 scenario_value = task_spec.get('scenario_value')
 
+                # here we are updating the value of the env.scenario.name with the env name
+                # it can also be done using a normal task_cfg['env']['scenario']['name] = env name but i got errors here so i relied on OmegaConf to do this for me
                 OmegaConf.update(task_cfg, scenario_key, scenario_value, merge=True)
                 OmegaConf.update(task_cfg.env.scenario, "env_kwargs", {}, merge=True)
 
+                # env specific configs 
                 task_cfg['env']['eval_metric'] = task_spec['eval_metric']
                 task_cfg['env']['log_win_rate'] = task_spec['log_win_rate']
                 task_cfg['env']['implicit_agent_id'] = task_spec['implicit_agent_id']
                 task_cfg['env']['aggregate_rewards'] = task_spec['aggregate_rewards']
-
                 task_cfg['env']['kwargs'] = task_spec['task_kwargs']
 
             elif env_name == "Smax":
                 
-
+                # the same is done here
+                # this specific env has a different way to create the config than the one before it
                 task_cfg['env']['scenario']['name'] = "HeuristicEnemySMAX"
                 task_cfg['env']['scenario']['task_name'] = task_name
 
@@ -779,7 +799,7 @@ def run_experiment(_config: DictConfig) -> float:
 
 
             else:
-
+                # same is done here
                 scenario_file_stem = task_spec.get('scenario_file_name')
                 scenario_file_path = os.path.join(scenario_base_path, f"{scenario_file_stem}.yaml")
                 scenario_cfg = OmegaConf.load(scenario_file_path)
@@ -799,14 +819,16 @@ def run_experiment(_config: DictConfig) -> float:
 
 
                     
-
+            # in the end i populated the env_name key with the env_name from the list of env_names in the task_cfg itself using an index
             task_cfg['env']['env_name'] = task_cfg['env']['envs_name'][i]['name'] 
                     
 
-
+            # create the envs append the train_env -> used to train and collect traj
+            # eval_env -> used for evaluation
             train_env, eval_env = environments.make(task_cfg)
             envs.append(train_env)
             eval_envs.append(eval_env)
+            # save the config of the tasks because these will be used later for evaluation also
             task_cfg_list.append(task_cfg)
             print(f"    {Fore.GREEN}Successfully created envs for task '{task_name}'.{Style.RESET_ALL}")
 # PRNG keys.

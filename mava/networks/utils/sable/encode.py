@@ -30,7 +30,7 @@ def train_encoder_fn(
     hstate: chex.Array,
     dones: chex.Array,
     step_count: chex.Array,
-    chunk_size: int,
+    chunk_size: list,
     task_id: int,
 ) -> Tuple[chex.Array, chex.Array, chex.Array]:
     """Chunkwise encoding for discrete action spaces."""

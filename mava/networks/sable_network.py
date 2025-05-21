@@ -134,12 +134,14 @@ class EncodeBlock(nn.Module):
     def setup(self) -> None:
         self.ln1 = nn.RMSNorm()
         self.ln2 = nn.RMSNorm()
-        # should i make this a list of retentions ?
+        
+        # pass a list of number of agents for all tasks so we can access the task specific n_agents inside the multiscaleretention to create
+        # task specific decay matrix
         self.retn = MultiScaleRetention(
             embed_dim=self.net_config.embed_dim,
             n_head=self.net_config.n_head,
-            all_n_agents_list=self.all_n_agents_list, # MODIFIED: pass the list
-            masked=False,  # Full retention for the encoder
+            all_n_agents_list=self.all_n_agents_list, 
+            masked=False,  
             memory_config=self.memory_config,
             decay_scaling_factor=self.memory_config.decay_scaling_factor,
         )
@@ -179,18 +181,19 @@ class Encoder(nn.Module):
     def setup(self) -> None:
         self.ln = nn.RMSNorm()
 
+        # create a task specific obs_encoder MLP
         self.task_obs_encoders = [
         TaskObsEncoderMLP(self.net_config.embed_dim, name=f"task_obs_encoder_{i}")
         for i in range(self.num_tasks)
         ]
-
+        # create a task specific value_head MLP 
         self.task_value_heads = [ 
             TaskValueHeadMLP(
                 embed_dim=self.net_config.embed_dim,
                 name=f"value_head_{task_id}"
             ) for task_id in range(self.num_tasks) 
         ]
-
+        # pass a list of num_agents for all tasks so it can be used for the encodeblock -> retention -> decay matrix per task
         self.blocks = [
             EncodeBlock(
                 self.net_config,
@@ -205,7 +208,7 @@ class Encoder(nn.Module):
         self, obs: chex.Array, hstate: chex.Array, dones: chex.Array, step_count: chex.Array, task_id: int
     ) -> Tuple[chex.Array, chex.Array, chex.Array]:
         """Apply chunkwise encoding."""
-        
+        # routing to the task MLP for obs
         selected_encoder = self.task_obs_encoders[task_id] 
         obs_rep = selected_encoder(obs)
 
@@ -218,11 +221,10 @@ class Encoder(nn.Module):
             obs_rep, hs_new = block(self.ln(obs_rep), hs, dones, step_count,task_id)
             updated_hstate = updated_hstate.at[:, :, i].set(hs_new)
         
-        
+        # routing to the task MLP head for the values
         selected_value_head = self.task_value_heads[task_id] 
         value = selected_value_head(obs_rep)
 
-        # value = self.head(obs_rep)
 
         return value, obs_rep, updated_hstate
 
@@ -231,11 +233,8 @@ class Encoder(nn.Module):
     ) -> Tuple[chex.Array, chex.Array, chex.Array]:
         """Apply recurrent encoding."""
 
-        # dummy_h = jnp.zeros_like(hstate)
-        # for enc in self.task_obs_encoders:
-        #     _rep, _hs = enc.recurrent(obs, dummy_h, step_count)
 
-
+        # the same as call func
         selected_encoder = self.task_obs_encoders[task_id] 
         obs_rep = selected_encoder(obs)
 
@@ -245,12 +244,11 @@ class Encoder(nn.Module):
         for i, block in enumerate(self.blocks):
             hs = hstate[:, :, i]  # Get the hidden state for the current block
             # Apply the recurrent encoder block
+            # passing the task id here is not necessary TODO removed later
             obs_rep, hs_new = block.recurrent(self.ln(obs_rep), hs, step_count, task_id)
             updated_hstate = updated_hstate.at[:, :, i].set(hs_new)
 
-        # Compute the value function
-        # value = self.head(obs_rep)
-
+        # same as the call func
         selected_value_head = self.task_value_heads[task_id] 
         value = selected_value_head(obs_rep) 
 
@@ -272,7 +270,8 @@ class DecodeBlock(nn.Module):
             embed_dim=self.net_config.embed_dim,
             n_head=self.net_config.n_head,
             all_n_agents_list=self.all_n_agents_list,
-            masked=True,  # Masked retention for the decoder
+            # the decoder need to be masked
+            masked=True,  
             memory_config=self.memory_config,
             decay_scaling_factor=self.memory_config.decay_scaling_factor,
         )
@@ -280,7 +279,8 @@ class DecodeBlock(nn.Module):
             embed_dim=self.net_config.embed_dim,
             n_head=self.net_config.n_head,
             all_n_agents_list=self.all_n_agents_list,
-            masked=True,  # Masked retention for the decoder
+            # same here
+            masked=True, 
             memory_config=self.memory_config,
             decay_scaling_factor=self.memory_config.decay_scaling_factor,
         )
@@ -360,7 +360,7 @@ class Decoder(nn.Module):
     def setup(self) -> None:
         self.ln = nn.RMSNorm()
 
-
+        # same as the obs_encoder -> created per task 
         self.task_action_encoders = [ 
             TaskActionEncoderMLP(
                 embed_dim=self.net_config.embed_dim, 
@@ -377,7 +377,7 @@ class Decoder(nn.Module):
             else None
         )
 
-
+        # same as value head -> per task also
         self.task_policy_heads = [ 
             TaskPolicyHeadMLP(
                 embed_dim=self.net_config.embed_dim, 
@@ -407,8 +407,7 @@ class Decoder(nn.Module):
     ) -> Tuple[chex.Array, Tuple[chex.Array, chex.Array]]:
         """Apply chunkwise decoding."""
         updated_hstates = tree.map(jnp.zeros_like, hstates)
-        # action_embeddings = self.action_encoder(action)
-
+        # same here -> select the task specific action encoder
         selected_action_encoder = self.task_action_encoders[task_id] 
         action_embeddings = selected_action_encoder(action)
 
@@ -422,7 +421,7 @@ class Decoder(nn.Module):
                 lambda x, y, j=i: x.at[:, :, j].set(y), updated_hstates, hs_new
             )
 
-        # logit = self.head(x)
+        # same here -> select the task specific policy head MLP
         selected_policy_head = self.task_policy_heads[task_id]
         logit = selected_policy_head(x)
 
@@ -438,8 +437,8 @@ class Decoder(nn.Module):
     ) -> Tuple[chex.Array, Tuple[chex.Array, chex.Array]]:
         """Apply recurrent decoding."""
         updated_hstates = tree.map(jnp.zeros_like, hstates)
-        # action_embeddings = self.action_encoder(action)
 
+        # same here -> select the task specific action encoder
         selected_action_encoder = self.task_action_encoders[task_id] 
         action_embeddings = selected_action_encoder(action)
 
@@ -454,7 +453,7 @@ class Decoder(nn.Module):
                 lambda x, y, j=i: x.at[:, :, j].set(y), updated_hstates, hs_new
             )
 
-        # logit = self.head(x)
+        # same here -> select the task specific policy heads
         selected_policy_head = self.task_policy_heads[task_id] 
         logit = selected_policy_head(x) 
 
@@ -474,9 +473,8 @@ class SableNetwork(nn.Module):
     num_tasks:int 
 
     def setup(self) -> None:
-        # if self.action_space_type not in [_DISCRETE, _CONTINUOUS]:
-        #     raise ValueError(f"Invalid action space type: {self.action_space_type}")
 
+        # just to make sure that the decay scaling factor is between 0 and 1
         assert (
             self.memory_config.decay_scaling_factor >= 0
             and self.memory_config.decay_scaling_factor <= 1
@@ -486,9 +484,11 @@ class SableNetwork(nn.Module):
         self.decay_kappas = 1 - jnp.exp(
             jnp.linspace(jnp.log(1 / 32), jnp.log(1 / 512), self.net_config.n_head)
         )
+
         self.decay_kappas = self.decay_kappas * self.memory_config.decay_scaling_factor
         self.decay_kappas = self.decay_kappas[None, :, None, None, None]
 
+        # create the encoder and decoder
         self.encoder = Encoder(
             self.net_config,
             self.memory_config,
@@ -505,6 +505,8 @@ class SableNetwork(nn.Module):
         )
 
         # Set the actor and trainer functions
+        # partial is like baking or pre-setting certain arguments into the function.
+        # now i dont need to pass chunk size list each time i am calling train_encoder_fn and act_encoder_fn
         self.train_encoder_fn = partial(
             train_encoder_fn,
             chunk_size=self.memory_config.chunk_size,
@@ -513,7 +515,11 @@ class SableNetwork(nn.Module):
             act_encoder_fn,
             chunk_size=self.n_agents_per_chunk,
         )
-
+        
+        # here i am making multiple functions (depending on the num_tasks) and each function will handle a set of num_agents
+        # this will allow me to have 3 functions for example, each one will deal with an env (task) and each env (task) will have different 
+        # num of agents. 
+        # I am also using partial to bake the chunck size
         self.train_decoder_fn = [
             partial(
                 discrete_train_decoder_fn,
@@ -523,6 +529,7 @@ class SableNetwork(nn.Module):
             for _ in range(self.num_tasks)
         ]
 
+        # having different copies of discrete_autoregressive_act function, each copy is dedicated for a task
         self.autoregressive_act = [
             discrete_autoregressive_act
             for _ in range(self.num_tasks)
@@ -545,11 +552,13 @@ class SableNetwork(nn.Module):
             observation.action_mask,
             observation.step_count,
         )
-
+        
+        # already got chunk_sizes list baked in 
         value, obs_rep, _ = self.train_encoder_fn(
             encoder=self.encoder, obs=obs, hstate=hstates[0], dones=dones, step_count=step_count,task_id=task_id
         )
 
+        # access the specific function needed for the task -> which have the num of agents for that task and chunk size list baked in 
         action_log, entropy = self.train_decoder_fn[task_id](
             decoder=self.decoder,
             obs_rep=obs_rep,
@@ -582,6 +591,7 @@ class SableNetwork(nn.Module):
         # Decay the hidden states: each timestep we decay the hidden states once
         decayed_hstates = tree.map(lambda x: x * self.decay_kappas, hstates)
 
+        # same here
         value, obs_rep, updated_enc_hs = self.act_encoder_fn(
             encoder=self.encoder,
             obs=obs,
@@ -590,6 +600,7 @@ class SableNetwork(nn.Module):
             task_id=task_id
         )
 
+        # this function doesnt need the num of agents or the chunk size list -> that why i did not bake them inside
         output_actions, output_actions_log, updated_dec_hs = self.autoregressive_act[task_id](
             decoder=self.decoder,
             obs_rep=obs_rep,
@@ -609,6 +620,9 @@ class SableNetwork(nn.Module):
         value = jnp.squeeze(value, axis=-1)
         return output_actions, output_actions_log, value, updated_hs
 
+    # custom init function to initalize all tasks
+    # it has the same functionality as get_action (which was the previous init task) 
+    # for multi tasking we have a list of obs, hs -> we loop through them and initialize each task dedicated function there
     @nn.compact
     def init_all_tasks(
       self,
@@ -617,6 +631,7 @@ class SableNetwork(nn.Module):
         key: chex.PRNGKey,
         ) -> None: 
         for i in range(len(observation)):
+            
 
             obs, legal_actions, step_count = (
                 observation[i].agents_view,
