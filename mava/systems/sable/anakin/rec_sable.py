@@ -380,48 +380,40 @@ def get_learner_fn(
 
 
 
-            N_minibatches = config.system.num_minibatches
-            N_tasks = len(minibatches_list)
+            losses = []
+            for i in range(len(minibatches_list)):
+                batch_info = (*minibatches_list[i], prev_hs_minibatch_list[i])
+                # (params, opt_states, entropy_key), loss_info =_update_minibatch((params, opt_states, key), batch_info)
 
-            epoch_total_loss_sum = { "total_loss": 0.0, "value_loss": 0.0, "actor_loss": 0.0, "entropy": 0.0 }
-            epoch_loss_count = 0
+                def _update_minibatch_for_task_i(carry, dummy):
+                                return _update_minibatch(carry, dummy,task_id=i)
+                
+                (params, opt_states, entropy_key), loss_info = jax.lax.scan(
+                    _update_minibatch_for_task_i,
+                    (params, opt_states, entropy_key),
+                    batch_info,
+                )
+                losses.append(loss_info)
 
-            for i in range(N_minibatches):
-                for j in range(N_tasks):
-                        traj_data_all_mbs_for_task, adv_data_all_mbs_for_task, targets_data_all_mbs_for_task = minibatches_list[j]
-       
-                        current_traj_data_mb = jax.tree_util.tree_map(
-                            lambda leaf_all_mbs: leaf_all_mbs[i],
-                            traj_data_all_mbs_for_task
-                        )
-                        current_adv_data_mb = adv_data_all_mbs_for_task[i]
-                        current_targets_data_mb = targets_data_all_mbs_for_task[i]
-                        
-                        hs_data_all_mbs_for_task = prev_hs_minibatch_list[j]
-                        current_hs_data_mb = jax.tree_util.tree_map(
-                            lambda leaf_all_mbs: leaf_all_mbs[i],
-                            hs_data_all_mbs_for_task
-                        )
-                        
-                        batch_info_single_mb_task = (current_traj_data_mb, current_adv_data_mb, current_targets_data_mb, current_hs_data_mb)
-
-                     
-                        (params, opt_states, key), loss_info_one_task_one_mb = _update_minibatch(
-                            (params, opt_states, key), 
-                            batch_info_single_mb_task,
-                            task_id=j 
-                        )
-                      
-                        for k_loss, v_loss in loss_info_one_task_one_mb.items():
-                            epoch_total_loss_sum[k_loss] += v_loss
-                        epoch_loss_count += 1
-
-            final_epoch_avg_loss = {k: v / epoch_loss_count for k, v in epoch_total_loss_sum.items() if epoch_loss_count > 0}
+            # take the mean over the task dimensions of the loss info
+            print(f'losses {type(losses)}')
+            total_losses = {}
+            # total_losses = {
+            #     k: sum(loss[k] for loss in losses) / len(losses)
+            #     for k in losses[0].keys()
+            #     }
+            for i in range(len(losses)):
+                for j in losses[i].keys():
+                    if j not in total_losses.keys():
+                        total_losses[j] = 0
+                    total_losses[j] = total_losses[j] + losses[i][j]
+            for i in total_losses.keys():
+                total_losses[i] = total_losses[i] / len(losses)
 
 
 
             update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hstates_list)
-            return update_state, final_epoch_avg_loss
+            return update_state, total_losses
         
         update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, updated_hstates_list)
 
@@ -541,7 +533,7 @@ def learner_setup(
             optax.adam(lr, eps=1e-5),
         ),
         # gradient accumilation happens every num_tasks -> the opt will step every n_tasks
-        every_k_schedule=len(envs),
+        every_k_schedule= config.system.num_minibatches,
         # if true -> first we take the average of the graidents and then step using that avg -> emulate large batch size
         # if false -> gradients for each num_task step will be summed 
         use_grad_mean=True 
@@ -643,7 +635,6 @@ def learner_setup(
     )
 
     # Get batched iterated update and replicate it to pmap it over cores.
-    # TODO here
     learn = get_learner_fn(envs, apply_fns, optim.update, config)
     # replicate learn function across devices
     learn = jax.pmap(learn, axis_name="device")
@@ -655,6 +646,7 @@ def learner_setup(
 
     
     states_list, timesteps_list = [], []
+    # calculate the number of keys needed
     num_envs_per_task_batch = config.arch.get('num_envs', 1) 
     num_update_batches = config.system.get('update_batch_size', 1) 
     total_keys_needed = num_tasks * n_devices * num_update_batches * num_envs_per_task_batch
@@ -665,7 +657,9 @@ def learner_setup(
     for i,env in enumerate(envs):
 
         task_keys_flat = keys_per_task_flat[i]
+        # reset all the parallel envs
         env_states, timesteps = jax.vmap(env.reset, in_axes=(0))(task_keys_flat)
+        # reshape each timesteps and env_states in the parallel envs
         reshape_states = lambda x: x.reshape(
             (n_devices, config.system.update_batch_size, config.arch.num_envs) + x.shape[1:]
         )
@@ -676,31 +670,30 @@ def learner_setup(
         states_list.append(env_states)
         timesteps_list.append(timesteps)
 
-    # Initialise learner state.
-    # Sepeare hstate env.
-    # Initialise hidden state.
     joint_hstates = []
 
     for _ in range(len(envs)):
+        # get initial hidden state
         init_hstates = get_init_hidden_state(config.network.net_config, config.arch.num_envs)
 
-        # Define params to be replicated across devices and batches.
         key, step_keys = jax.random.split(key)
         joint_hstates.append(init_hstates)
 
+    # replicate params and opt state through devices
     replicate_learner = (params, opt_state, step_keys)
     # Duplicate learner for update_batch_size.  
     broadcast = lambda x: jnp.broadcast_to(x, (config.system.update_batch_size, *x.shape))
     replicate_learner = tree.map(broadcast, replicate_learner)
     
+    # replicate the joint hstates also
     joint_hstates = tree.map(broadcast, joint_hstates)
-    # Duplicate learner across devices.
     replicate_learner = flax.jax_utils.replicate(replicate_learner, devices=jax.devices())
     joint_hstates = flax.jax_utils.replicate(joint_hstates, devices=jax.devices())
 
     # Initialise learner state.
     params, opt_state, step_keys = replicate_learner
 
+    # now this learner state has its params replicated through the devices and envs 
     init_learner_state = LearnerState(
         params=params,
         opt_states=opt_state,
@@ -835,6 +828,9 @@ def run_experiment(_config: DictConfig) -> float:
     key, key_e, net_key = jax.random.split(jax.random.PRNGKey(config.system.seed), num=3)
 
     # Setup learner.
+    # learn -> i will explain it when its used down the code
+    # sable_execution_fn -> get actions 
+    # learner_state -> replicated learner state through device and envs
     learn, sable_execution_fn, learner_state = learner_setup(envs, (key, net_key), config)
 
     # Setup evaluator.
