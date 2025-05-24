@@ -647,19 +647,29 @@ def learner_setup(
     
     states_list, timesteps_list = [], []
     # calculate the number of keys needed
+    # num_envs = 64
     num_envs_per_task_batch = config.arch.get('num_envs', 1) 
+    # update_batch_size = 2
     num_update_batches = config.system.get('update_batch_size', 1) 
+    # now this code means that we are running 64 env in parralel -> first mini batch
+    # then after that run them again in parallel -> second mini batch
+    # so overall we have 128 env per task -> 5 tasks means 640 env overall
+    # we need a seperate key for each one of these
     total_keys_needed = num_tasks * n_devices * num_update_batches * num_envs_per_task_batch
     key, init_env_key_base = jax.random.split(key)
     all_env_keys = jax.random.split(init_env_key_base, total_keys_needed)
+    # why flatten? vmap can not operate on 2 axises, we need to five it one acces to work on
+    # all_env_keys.shape[-1] -> size of each key is 2 
     keys_per_task_flat = all_env_keys.reshape(num_tasks, -1, all_env_keys.shape[-1])
 
     for i,env in enumerate(envs):
-
+        # 128*2 
         task_keys_flat = keys_per_task_flat[i]
         # reset all the parallel envs
         env_states, timesteps = jax.vmap(env.reset, in_axes=(0))(task_keys_flat)
         # reshape each timesteps and env_states in the parallel envs
+        # now each of the timesteos and env_states has the shape of  [ (n_devices * num_envs * update_batch_size), ..rest of shapes ]
+        # we want to to be [ n_devices , update_batch_size , num_envs , ..rest of shapes ]
         reshape_states = lambda x: x.reshape(
             (n_devices, config.system.update_batch_size, config.arch.num_envs) + x.shape[1:]
         )
@@ -676,31 +686,44 @@ def learner_setup(
         # get initial hidden state
         init_hstates = get_init_hidden_state(config.network.net_config, config.arch.num_envs)
 
-        key, step_keys = jax.random.split(key)
         joint_hstates.append(init_hstates)
 
+    # generate a unique key for each device and each batch
+    key, *step_keys = jax.random.split(key, n_devices * config.system.update_batch_size + 1)
+    step_keys = jnp.array(step_keys).reshape(n_devices, config.system.update_batch_size, -1)
+
     # replicate params and opt state through devices
-    replicate_learner = (params, opt_state, step_keys)
-    # Duplicate learner for update_batch_size.  
+    replicate_learner = (params, opt_state) 
     broadcast = lambda x: jnp.broadcast_to(x, (config.system.update_batch_size, *x.shape))
+
+    # make identical copies of params and opt_state 
+    # now each batch and each device will have the same params and opt_state
     replicate_learner = tree.map(broadcast, replicate_learner)
-    
-    # replicate the joint hstates also
-    joint_hstates = tree.map(broadcast, joint_hstates)
+
+    # copy the replicated_learner to the physical devices
     replicate_learner = flax.jax_utils.replicate(replicate_learner, devices=jax.devices())
-    joint_hstates = flax.jax_utils.replicate(joint_hstates, devices=jax.devices())
+    replicated_step_keys = flax.jax_utils.replicate(step_keys, devices=jax.devices())
+
+    # do the same for the hidden state
+    joint_replicated_hstates = []
+    for hs in joint_hstates:
+        h_task_broadcasted = jax.tree_util.tree_map(broadcast, hs)
+        
+        h_task_replicated = flax.jax_utils.replicate(h_task_broadcasted, devices=jax.devices())
+        joint_replicated_hstates.append(h_task_replicated)
+
 
     # Initialise learner state.
-    params, opt_state, step_keys = replicate_learner
+    params, opt_state = replicate_learner
 
     # now this learner state has its params replicated through the devices and envs 
     init_learner_state = LearnerState(
         params=params,
         opt_states=opt_state,
-        key=step_keys,
+        key=replicated_step_keys,
         env_state=states_list,
         timestep=timesteps_list,
-        hstates=joint_hstates,
+        hstates=joint_replicated_hstates,
     )
 
     return learn, apply_fns[0], init_learner_state
