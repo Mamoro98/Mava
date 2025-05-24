@@ -39,91 +39,6 @@ from mava.utils.network_utils import _CONTINUOUS, _DISCRETE
 from typing import Sequence 
 
 
-class TaskPolicyHeadMLP(nn.Module):
-    embed_dim: int 
-    action_dim: int 
-    name: Optional[str] = None
-
-    @nn.compact
-    def __call__(self, x: chex.Array) -> chex.Array:
-
-        y = nn.Dense(
-                features=self.embed_dim, 
-                kernel_init=orthogonal(jnp.sqrt(2)),
-                name=f"{self.name}_dense1"
-            )(x)
-        y = nn.gelu(y)
-        y = nn.RMSNorm(name=f"{self.name}_rmsnorm")(y)
-        logits = nn.Dense(
-                    features=self.action_dim, 
-                    kernel_init=orthogonal(0.01),
-                    name=f"{self.name}_dense2"
-                 )(y)
-        return logits
-
-
-class TaskObsEncoderMLP(nn.Module):
-    embed_dim: int
-    name: Optional[str] = None
-
-
-
-    @nn.compact
-    def __call__(self, obs: chex.Array) -> chex.Array:
-        x = nn.RMSNorm(name=f"{self.name}_rmsnorm")(obs)
-        x = nn.Dense(
-                features=self.embed_dim,
-                kernel_init=orthogonal(jnp.sqrt(2)),
-                use_bias=False, 
-                name=f"{self.name}_dense"
-
-            )(x)
-        x = nn.gelu(x)
-        return x
-
-
-class TaskValueHeadMLP(nn.Module):
-
-    embed_dim: int
-    name: Optional[str] = None
-
-    @nn.compact
-    def __call__(self, x: chex.Array) -> chex.Array:
-
-        y = nn.Dense(
-                features=self.embed_dim,
-                kernel_init=orthogonal(jnp.sqrt(2)),
-                name=f"value_{self.name}_dense1"
-            )(x)
-        y = nn.gelu(y)
-        y = nn.RMSNorm(name=f"value_{self.name}_rmsnorm")(y)
-        value = nn.Dense(
-                    features=1,
-                    kernel_init=orthogonal(0.01),
-                    name=f"value_{self.name}_dense2"
-                )(y)
-        return value
-
-
-class TaskActionEncoderMLP(nn.Module):
-    embed_dim: int  
-    action_dim: int 
-    name: Optional[str] = None
-
-    def setup(self):
-        self.action_embedding_layer = nn.Dense(
-                    self.embed_dim,
-                    use_bias=True,
-                    kernel_init=orthogonal(jnp.sqrt(2)),
-                )
-
-
-    @nn.compact
-    def __call__(self, action: chex.Array) -> chex.Array:
-        x = self.action_embedding_layer(action)
-        x = nn.gelu(x)
-        return x
-    
 class EncodeBlock(nn.Module):   
     """Sable encoder block."""
 
@@ -175,25 +90,35 @@ class Encoder(nn.Module):
     net_config: SableNetworkConfig
     memory_config: DictConfig
     all_n_agents_list: list[int]
-    num_tasks: int
 
 
     def setup(self) -> None:
         self.ln = nn.RMSNorm()
 
-        # create a task specific obs_encoder MLP
-        self.task_obs_encoders = [
-        TaskObsEncoderMLP(self.net_config.embed_dim, name=f"task_obs_encoder_{i}")
-        for i in range(self.num_tasks)
-        ]
-        # create a task specific value_head MLP 
-        self.task_value_heads = [ 
-            TaskValueHeadMLP(
-                embed_dim=self.net_config.embed_dim,
-                name=f"value_head_{task_id}"
-            ) for task_id in range(self.num_tasks) 
-        ]
-        # pass a list of num_agents for all tasks so it can be used for the encodeblock -> retention -> decay matrix per task
+        #
+        
+        self.obs_encoder = nn.Sequential(
+            [
+                nn.RMSNorm(),
+                nn.Dense(
+                    self.net_config.embed_dim, kernel_init=orthogonal(jnp.sqrt(2)), use_bias=False
+                ),
+                nn.gelu,
+            ],
+            name="shared_obs_encoder" 
+        )
+        
+        
+        self.head = nn.Sequential(
+            [
+                nn.Dense(self.net_config.embed_dim, kernel_init=orthogonal(jnp.sqrt(2))),
+                nn.gelu,
+                nn.RMSNorm(),
+                nn.Dense(1, kernel_init=orthogonal(0.01)), 
+            ],
+            name="shared_value_head" 
+        )
+
         self.blocks = [
             EncodeBlock(
                 self.net_config,
@@ -204,13 +129,13 @@ class Encoder(nn.Module):
             for block_id in range(self.net_config.n_block)
         ]
 
+
     def __call__(
         self, obs: chex.Array, hstate: chex.Array, dones: chex.Array, step_count: chex.Array, task_id: int
     ) -> Tuple[chex.Array, chex.Array, chex.Array]:
         """Apply chunkwise encoding."""
         # routing to the task MLP for obs
-        selected_encoder = self.task_obs_encoders[task_id] 
-        obs_rep = selected_encoder(obs)
+        obs_rep = self.obs_encoder(obs) 
 
 
         updated_hstate = jnp.zeros_like(hstate)
@@ -221,9 +146,8 @@ class Encoder(nn.Module):
             obs_rep, hs_new = block(self.ln(obs_rep), hs, dones, step_count,task_id)
             updated_hstate = updated_hstate.at[:, :, i].set(hs_new)
         
-        # routing to the task MLP head for the values
-        selected_value_head = self.task_value_heads[task_id] 
-        value = selected_value_head(obs_rep)
+        value = self.head(obs_rep) 
+
 
 
         return value, obs_rep, updated_hstate
@@ -234,9 +158,8 @@ class Encoder(nn.Module):
         """Apply recurrent encoding."""
 
 
-        # the same as call func
-        selected_encoder = self.task_obs_encoders[task_id] 
-        obs_rep = selected_encoder(obs)
+        obs_rep = self.obs_encoder(obs) 
+
 
         updated_hstate = jnp.zeros_like(hstate)
 
@@ -248,9 +171,7 @@ class Encoder(nn.Module):
             obs_rep, hs_new = block.recurrent(self.ln(obs_rep), hs, step_count, task_id)
             updated_hstate = updated_hstate.at[:, :, i].set(hs_new)
 
-        # same as the call func
-        selected_value_head = self.task_value_heads[task_id] 
-        value = selected_value_head(obs_rep) 
+        value = self.head(obs_rep) 
 
 
         return value, obs_rep, updated_hstate
@@ -353,48 +274,56 @@ class Decoder(nn.Module):
     net_config: SableNetworkConfig
     memory_config: DictConfig
     all_n_agents_list: list[int]
-    tasks_action_dims: list[int]
-    num_tasks: int 
+    max_action_dims: int
     tasks_action_space_type: list[str]
 
     def setup(self) -> None:
         self.ln = nn.RMSNorm()
 
-        # same as the obs_encoder -> created per task 
-        self.task_action_encoders = [ 
-            TaskActionEncoderMLP(
-                embed_dim=self.net_config.embed_dim, 
-                action_dim=self.tasks_action_dims[task_id],       
-                name= f"action_encoder_{task_id}"
-            ) for task_id in range(self.num_tasks) 
-        ]
+        #
+        
+        use_bias = self.tasks_action_space_type == _CONTINUOUS 
+        self.action_encoder = nn.Sequential( 
+            [
+                nn.Dense(
+                    self.net_config.embed_dim,
+                    use_bias=use_bias,
+                    kernel_init=orthogonal(jnp.sqrt(2)),
+                ),
+                nn.gelu,
+            ],
+            name="shared_action_encoder" 
+        )
 
-
-        #Optional: out of the scope 
-        self.log_std = (
-            self.param("log_std", nn.initializers.zeros, (self.tasks_action_dims[0],))
-            if self.tasks_action_space_type[0] == _CONTINUOUS
+        
+        self.log_std = ( 
+            self.param("log_std", nn.initializers.zeros, (self.max_action_dims,)) 
+            if self.tasks_action_space_type == _CONTINUOUS
             else None
         )
 
-        # same as value head -> per task also
-        self.task_policy_heads = [ 
-            TaskPolicyHeadMLP(
-                embed_dim=self.net_config.embed_dim, 
-                action_dim=self.tasks_action_dims[task_id],       
-                name=f"policy_head_{task_id}"
-            ) for task_id in range(self.num_tasks) 
-        ]
+        
+        
+        self.head = nn.Sequential( 
+            [
+                nn.Dense(self.net_config.embed_dim, kernel_init=orthogonal(jnp.sqrt(2))),
+                nn.gelu,
+                nn.RMSNorm(),
+                nn.Dense(self.max_action_dims, kernel_init=orthogonal(0.01)), 
+            ],
+            name="shared_policy_head" 
+        )
 
         self.blocks = [
             DecodeBlock(
                 self.net_config,
                 self.memory_config,
-                self.all_n_agents_list,
+                self.all_n_agents_list, 
                 name=f"decoder_block_{block_id}",
             )
             for block_id in range(self.net_config.n_block)
         ]
+
 
     def __call__(
         self,
@@ -408,8 +337,7 @@ class Decoder(nn.Module):
         """Apply chunkwise decoding."""
         updated_hstates = tree.map(jnp.zeros_like, hstates)
         # same here -> select the task specific action encoder
-        selected_action_encoder = self.task_action_encoders[task_id] 
-        action_embeddings = selected_action_encoder(action)
+        action_embeddings = self.action_encoder(action) 
 
         x = self.ln(action_embeddings)
 
@@ -421,9 +349,7 @@ class Decoder(nn.Module):
                 lambda x, y, j=i: x.at[:, :, j].set(y), updated_hstates, hs_new
             )
 
-        # same here -> select the task specific policy head MLP
-        selected_policy_head = self.task_policy_heads[task_id]
-        logit = selected_policy_head(x)
+        logit = self.head(x) 
 
         return logit, updated_hstates
 
@@ -438,9 +364,8 @@ class Decoder(nn.Module):
         """Apply recurrent decoding."""
         updated_hstates = tree.map(jnp.zeros_like, hstates)
 
-        # same here -> select the task specific action encoder
-        selected_action_encoder = self.task_action_encoders[task_id] 
-        action_embeddings = selected_action_encoder(action)
+        action_embeddings = self.action_encoder(action) 
+
 
         x = self.ln(action_embeddings)
 
@@ -453,9 +378,7 @@ class Decoder(nn.Module):
                 lambda x, y, j=i: x.at[:, :, j].set(y), updated_hstates, hs_new
             )
 
-        # same here -> select the task specific policy heads
-        selected_policy_head = self.task_policy_heads[task_id] 
-        logit = selected_policy_head(x) 
+        logit = self.head(x)
 
 
         return logit, updated_hstates
@@ -466,7 +389,7 @@ class SableNetwork(nn.Module):
 
     all_n_agents: tuple
     n_agents_per_chunk: tuple
-    task_action_dims: list
+    max_action_dim: int
     net_config: SableNetworkConfig
     memory_config: DictConfig
     task_action_space_types: list
@@ -493,14 +416,12 @@ class SableNetwork(nn.Module):
             self.net_config,
             self.memory_config,
             self.n_agents_per_chunk,
-            self.num_tasks,
         )
         self.decoder = Decoder( 
             self.net_config,
             self.memory_config,
             self.n_agents_per_chunk,
-            self.task_action_dims,
-            self.num_tasks,
+            self.max_action_dim,
             self.task_action_space_types,
         )
 
@@ -530,11 +451,8 @@ class SableNetwork(nn.Module):
         ]
 
         # having different copies of discrete_autoregressive_act function, each copy is dedicated for a task
-        self.autoregressive_act = [
-            discrete_autoregressive_act
-            for _ in range(self.num_tasks)
-        ]
-
+        self.autoregressive_act = discrete_autoregressive_act
+           
 
 
     def __call__(
@@ -601,7 +519,7 @@ class SableNetwork(nn.Module):
         )
 
         # this function doesnt need the num of agents or the chunk size list -> that why i did not bake them inside
-        output_actions, output_actions_log, updated_dec_hs = self.autoregressive_act[task_id](
+        output_actions, output_actions_log, updated_dec_hs = self.autoregressive_act(
             decoder=self.decoder,
             obs_rep=obs_rep,
             legal_actions=legal_actions,
@@ -626,17 +544,17 @@ class SableNetwork(nn.Module):
     @nn.compact
     def init_all_tasks(
       self,
-        observation: list[Observation],
+        padded_obs: list[Observation],
         hstates: list[HiddenStates],
         key: chex.PRNGKey,
         ) -> None: 
-        for i in range(len(observation)):
+        for i in range(len(padded_obs)):
             
 
             obs, legal_actions, step_count = (
-                observation[i].agents_view,
-                observation[i].action_mask,
-                observation[i].step_count,
+                padded_obs[i].agents_view,
+                padded_obs[i].action_mask,
+                padded_obs[i].step_count,
             )
 
             decayed_hstates = tree.map(lambda x: x * self.decay_kappas, hstates[i])
@@ -649,7 +567,7 @@ class SableNetwork(nn.Module):
                     task_id=i
                 )
             
-            output_actions, output_actions_log, updated_dec_hs = self.autoregressive_act[i](
+            output_actions, output_actions_log, updated_dec_hs = self.autoregressive_act(
                 decoder=self.decoder,
                 obs_rep=obs_rep,
                 legal_actions=legal_actions,

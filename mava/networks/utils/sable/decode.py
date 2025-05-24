@@ -124,10 +124,11 @@ def discrete_autoregressive_act(
     key: chex.PRNGKey,
     task_id: int
 ) -> Tuple[chex.Array, chex.Array, chex.Array]:
+    max_action_dims=decoder.max_action_dims
     B, N, A = legal_actions.shape
     # print(f"legal actions",legal_actions.shape)
 
-    shifted_actions = jnp.zeros((B, N, A + 1))
+    shifted_actions = jnp.zeros((B, N, max_action_dims + 1))
     shifted_actions = shifted_actions.at[:, 0, 0].set(1)
 
     output_action = jnp.zeros((B, N, 1))
@@ -142,8 +143,21 @@ def discrete_autoregressive_act(
             step_count=step_count[:, i : i + 1],
             task_id = task_id
         )
+
+
+        legal_actions_for_current_agent = legal_actions[:, i : i + 1, :]
+        broadcastable_mask = jnp.zeros_like(logit, dtype=jnp.bool_)
+
+        num_actual_actions_for_slice = legal_actions_for_current_agent.shape[-1]
+
+        broadcastable_mask = broadcastable_mask.at[..., :num_actual_actions_for_slice].set(legal_actions_for_current_agent)
+
+
+
+
+
         masked_logits = jnp.where(
-            legal_actions[:, i : i + 1, :],
+            broadcastable_mask,
             logit,
             jnp.finfo(jnp.float32).min,
         )
@@ -155,7 +169,7 @@ def discrete_autoregressive_act(
 
         # Adds all except the last action to shifted_actions, as it is out of range.
         shifted_actions = shifted_actions.at[:, i + 1, 1:].set(
-            jax.nn.one_hot(action[:, 0], A), mode="drop"
+            jax.nn.one_hot(action[:, 0], max_action_dims), mode="drop"
         )
     output_actions = output_action.astype(jnp.int32)
     output_actions = jnp.squeeze(output_actions, axis=-1)

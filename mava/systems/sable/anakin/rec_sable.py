@@ -55,6 +55,16 @@ import os
 from flax.core import freeze, unfreeze
 
 
+from typing import NamedTuple 
+
+class NetworkInputObservation(NamedTuple): 
+    agents_view: chex.Array 
+    action_mask: chex.Array 
+    step_count: chex.Array  
+
+
+
+
 def get_learner_fn(
     envs: List[MarlEnv],
     apply_fns: Tuple[ActorApply, LearnerApply],
@@ -98,11 +108,48 @@ def get_learner_fn(
             # Select action
             key, policy_key = jax.random.split(key)
 
-            # Apply the actor network to get the action, log_prob, value and updated hstates.
-            last_obs = last_timestep.observation
+
+
+
+            last_obs_pytree = last_timestep.observation #
+            max_obs_f_dim = config.system.max_obs_feature_dim 
+
+            
+            
+            def _pad_obs_leaf_for_rollout(leaf_arr):
+                
+                if leaf_arr.ndim >= 1: 
+                    
+                    num_dims_to_keep = leaf_arr.ndim - 1
+                    current_feat_dim = leaf_arr.shape[-1]
+                    if current_feat_dim < max_obs_f_dim:
+                        pad_width = [(0,0)] * num_dims_to_keep + [(0, max_obs_f_dim - current_feat_dim)]
+                        return jnp.pad(leaf_arr, pad_width)
+                return leaf_arr
+
+
+
+
+
+            padded_agents_view = tree.map(_pad_obs_leaf_for_rollout, last_obs_pytree.agents_view)
+
+
+            obs_for_select_fn = padded_agents_view
+
+            obs_for_network = NetworkInputObservation(
+                agents_view=padded_agents_view,
+                action_mask=last_obs_pytree.action_mask, 
+                step_count=last_obs_pytree.step_count  
+            )
+                        
+
+
+
+
+
             action, log_prob, value, hstates = sable_action_select_fn(  # type: ignore
                 params,
-                last_obs,
+                obs_for_network,
                 hstates,
                 policy_key,
                 task_id = task_id
@@ -179,9 +226,64 @@ def get_learner_fn(
             timesteps_list.append(last_timestep_new)
             
             key, last_val_key = jax.random.split(key)
-            _, _, last_val, _ = sable_action_select_fn(  # type: ignore
-                params_new, last_timestep_new.observation, updated_hstates_new, last_val_key,task_id=i
+
+
+
+
+
+            original_last_obs_pytree = last_timestep_new.observation
+            original_last_agents_view = original_last_obs_pytree.agents_view
+            original_last_action_mask = original_last_obs_pytree.action_mask
+            original_last_step_count = original_last_obs_pytree.step_count
+            
+            max_obs_f_dim = config.system.max_obs_feature_dim #
+
+            
+            
+            def _pad_obs_leaf(leaf_arr):
+                if leaf_arr.ndim >= 1: 
+                    num_dims_to_keep = leaf_arr.ndim - 1
+                    current_feat_dim = leaf_arr.shape[-1]
+                    if current_feat_dim < max_obs_f_dim:
+                        pad_width = [(0,0)] * num_dims_to_keep + [(0, max_obs_f_dim - current_feat_dim)]
+                        return jnp.pad(leaf_arr, pad_width)
+                return leaf_arr
+
+            padded_last_agents_view = jax.tree_util.tree_map(_pad_obs_leaf, original_last_agents_view)
+
+            _, _, last_val, _ = sable_action_select_fn(  
+                params_new, 
+                
+                padded_last_agents_view,    
+                original_last_action_mask,  
+                original_last_step_count,   
+                updated_hstates_new,        
+                last_val_key,               
+                task_id=i                   
             )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            # _, _, last_val, _ = sable_action_select_fn(  # type: ignore
+            #     params_new, last_timestep_new.observation, updated_hstates_new, last_val_key,task_id=i
+            # )
             
             # last_done = last_timestep_new.last().repeat(env.num_agents).reshape(num_envs, -1)
             last_done = jax.vmap(lambda x: x.repeat(config.system.num_agents[i], axis=-1))(last_timestep_new.last())
@@ -243,9 +345,42 @@ def get_learner_fn(
                 ) -> Tuple:
                     """Calculate Sable loss."""
                     # Rerun network
+
+
+
+
+
+
+                    max_obs_f_dim = config.system.max_obs_feature_dim
+
+                    def _pad_obs_leaf_for_loss(leaf_arr):
+                        #
+                        if leaf_arr.ndim >= 2: 
+                                            
+                            num_dims_to_keep = leaf_arr.ndim - 1
+                            current_feat_dim = leaf_arr.shape[-1]
+                            if current_feat_dim < max_obs_f_dim:
+                                pad_width = [(0,0)] * num_dims_to_keep + [(0, max_obs_f_dim - current_feat_dim)]
+                                return jnp.pad(leaf_arr, pad_width)
+                        return leaf_arr
+
+                    
+                    padded_obs_agents_view_for_loss = jax.tree_util.tree_map(_pad_obs_leaf_for_loss, traj_batch.obs.agents_view)
+
+                    
+                    
+                    
+                    
+                    obs_for_apply_fn = padded_obs_agents_view_for_loss
+
+
+
+
+
+
                     value, log_prob, entropy = sable_apply_fn(  # type: ignore
                         params,
-                        traj_batch.obs,
+                        obs_for_apply_fn,
                         traj_batch.action,
                         prev_hstates,
                         traj_batch.done,
@@ -477,7 +612,6 @@ def learner_setup(
     
     # save it in the config (the big one not the task specific one)
     config.system.num_agents = all_num_agents
-
     # PRNG keys.
     key, net_key = keys
     
@@ -491,12 +625,38 @@ def learner_setup(
 
         task_action_dims.append(task_act_dim)
         task_action_space_types.append(task_act_type)
-
     # i created a list of the chunk sizes in the root config
     # this list will be populated with the num_agents for each task multiplied by the rollout length 
     # this list will be used to determine the chunk size for each task which will vary depending on the number of agents in the task
     for i in range(num_tasks):
         config.network.memory_config.chunk_size.append(config.system.rollout_length * all_num_agents[i])
+
+
+
+
+    max_obs_feature_dim = 0
+
+    for env_instance in envs:
+        sample_obs = env_instance.observation_spec.generate_value()
+        
+        current_task_feature_dim = sample_obs.agents_view.shape[-1] 
+
+        max_obs_feature_dim = max(max_obs_feature_dim, current_task_feature_dim)
+
+
+
+    max_action_dim = 0
+    
+    for env_instance in envs:
+        num_actions_for_task = env_instance.action_spec.num_values
+        num_actions_for_task = num_actions_for_task[0]
+        max_action_dim = max(max_action_dim, int(num_actions_for_task))
+
+    
+    
+    config.system.max_obs_feature_dim = int(max_obs_feature_dim)
+    config.system.max_action_dim = int(max_action_dim)
+    
 
 
     # Define network.
@@ -510,7 +670,7 @@ def learner_setup(
     sable_network = SableNetwork(
         all_n_agents=all_num_agents,
         n_agents_per_chunk=all_num_agents,
-        task_action_dims=task_action_dims,
+        max_action_dim=config.system.max_action_dim,
         net_config=config.network.net_config,
         memory_config=config.network.memory_config,
         task_action_space_types=task_action_space_types,   
@@ -539,90 +699,74 @@ def learner_setup(
         use_grad_mean=True 
     )
 
-    def pad_observation_object(
-        obs ,
-        target_n_agents,
-        current_n_agents,
-        target_feature_dim,
-        current_feature_dim
-    ):
 
-        agent_padding_needed = target_n_agents - current_n_agents
 
-        # --- Pad agents_view ---
-        padded_agents_view = obs.agents_view
-        # 1. Pad agent dimension
-        if agent_padding_needed > 0:
-            agent_pad_shape = list(obs.agents_view.shape)
-            agent_pad_shape[0] = agent_padding_needed
-            padding_agents = jnp.zeros(agent_pad_shape, dtype=obs.agents_view.dtype)
-            padded_agents_view = jnp.concatenate([padded_agents_view, padding_agents], axis=0)
-        # 2. Pad feature dimension
-        feature_padding_needed = target_feature_dim - current_feature_dim
-        if feature_padding_needed < 0:
-            raise ValueError("Target feature dim cannot be smaller than current.")
-        if feature_padding_needed > 0:
-            feature_pad_shape = list(padded_agents_view.shape) # Use shape after agent padding
-            feature_pad_shape[1] = feature_padding_needed
-            padding_features = jnp.zeros(feature_pad_shape, dtype=obs.agents_view.dtype)
-            padded_agents_view = jnp.concatenate([padded_agents_view, padding_features], axis=1)
 
-        # --- Pad action_mask ---
-        padded_action_mask = obs.action_mask
-        if agent_padding_needed > 0:
-            agent_pad_shape = list(obs.action_mask.shape)
-            agent_pad_shape[0] = agent_padding_needed
-            padding_agents_mask = jnp.full(agent_pad_shape, False, dtype=jnp.bool_) # Pad masks with False
-            padded_action_mask = jnp.concatenate([padded_action_mask, padding_agents_mask], axis=0)
 
-        # --- Pad step_count ---
-        padded_step_count = obs.step_count
-        if agent_padding_needed > 0:
-            agent_pad_shape = list(obs.step_count.shape)
-            agent_pad_shape[0] = agent_padding_needed
-            padding_agents_step = jnp.zeros(agent_pad_shape, dtype=obs.step_count.dtype) # Pad step count with 0
-            padded_step_count = jnp.concatenate([padded_step_count, padding_agents_step], axis=0)
 
-        # --- Create and return a new Observation object ---
-        # Use the same class that was passed in
-        # Note: If Observation has other fields, you might need to copy them too: **obs._asdict()
-        return type(obs)(
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    padded_init_obs_list = []
+    init_hs_list = []
+    for i, env_task in enumerate(envs):
+        init_obs_unpadded = env_task.observation_spec.generate_value()
+        
+        # TODO review this function
+        def pad_init_obs_leaf(leaf_array):
+            
+            if leaf_array.ndim == 2: 
+                current_feat_dim = leaf_array.shape[-1]
+                if current_feat_dim < config.system.max_obs_feature_dim:
+                    pad_width = [(0,0), (0, config.system.max_obs_feature_dim - current_feat_dim)]
+                    return jnp.pad(leaf_array, pad_width)
+            return leaf_array 
+
+        padded_agents_view = tree.map(pad_init_obs_leaf, init_obs_unpadded.agents_view)
+        
+        
+        padded_init_obs_unpadded = type(init_obs_unpadded)(
             agents_view=padded_agents_view,
-            action_mask=padded_action_mask,
-            step_count=padded_step_count,
-            # Add other fields from the original obs if they exist and should be preserved
-            # e.g., grid=obs.grid if that's part of the Observation type
+            action_mask=init_obs_unpadded.action_mask, 
+            step_count=init_obs_unpadded.step_count   
         )
 
-
-    # getting the initial observations and hidden states so we can initialize the params of the network
-    inti_obs_list = []
-    init_hs_list = []
-    for idx in range(len(envs)):
-        # shape is Observation(agents_view=(10, 64), action_mask=(10, 5), step_count=(10,)) for the first task
-        # WARNING, it is different from task to task
-        init_obs_unpadded = envs[idx].observation_spec.generate_value()
-        # adding a batch axis 
-        # Observation(agents_view=(1, 10, 64), action_mask=(1, 10, 5), step_count=(1, 10))
-        init_obs = tree.map(lambda x: x[jnp.newaxis, ...], init_obs_unpadded)
-        inti_obs_list.append(init_obs)
-    
-        # HiddenStates(encoder=(64, 1, 4, 64, 64), decoder_self_retn=(64, 1, 4, 64, 64), decoder_cross_retn=(64, 1, 4, 64, 64))
+        init_obs_padded_batched = tree.map(lambda x: x[jnp.newaxis, ...], padded_init_obs_unpadded)
+        padded_init_obs_list.append(init_obs_padded_batched)
+        
+        
         init_hs = get_init_hidden_state(config.network.net_config, config.arch.num_envs)
-
-
-        # HiddenStates(encoder=(1, 1, 4, 64, 64), decoder_self_retn=(1, 1, 4, 64, 64), decoder_cross_retn=(1, 1, 4, 64, 64))
-        # TODO why this is happening ?
         init_hs = tree.map(lambda x: x[0, jnp.newaxis], init_hs)
         init_hs_list.append(init_hs)
+
+
 
     # Initialise params and optimiser state using the custom function
     params = sable_network.init(
         net_key,
-        inti_obs_list,
-        init_hs_list,
+        padded_init_obs_list, 
+        init_hs_list,         
         net_key,
-        method="init_all_tasks",
+        method="init_all_tasks", 
     )
 
     # init the optizer chain with the params
