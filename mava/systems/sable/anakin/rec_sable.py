@@ -663,11 +663,11 @@ def learner_setup(
         joint_hstates.append(init_hstates)
 
     # generate a unique key for each device and each batch
-    key, *step_keys = jax.random.split(key, n_devices * config.system.update_batch_size + 1)
-    step_keys = jnp.array(step_keys).reshape(n_devices, config.system.update_batch_size, -1)
+    key, step_keys = jax.random.split(key)
+
 
     # replicate params and opt state through devices
-    replicate_learner = (params, opt_state) 
+    replicate_learner = (params, opt_state,step_keys) 
     broadcast = lambda x: jnp.broadcast_to(x, (config.system.update_batch_size, *x.shape))
 
     # make identical copies of params and opt_state 
@@ -676,7 +676,6 @@ def learner_setup(
 
     # copy the replicated_learner to the physical devices
     replicate_learner = flax.jax_utils.replicate(replicate_learner, devices=jax.devices())
-    replicated_step_keys = flax.jax_utils.replicate(step_keys, devices=jax.devices())
 
     # do the same for the hidden state
     joint_replicated_hstates = []
@@ -688,13 +687,13 @@ def learner_setup(
 
 
     # Initialise learner state.
-    params, opt_state = replicate_learner
+    params, opt_state,step_keys = replicate_learner
 
     # now this learner state has its params replicated through the devices and envs 
     init_learner_state = LearnerState(
         params=params,
         opt_states=opt_state,
-        key=replicated_step_keys,
+        key=step_keys,
         env_state=states_list,
         timestep=timesteps_list,
         hstates=joint_replicated_hstates,
