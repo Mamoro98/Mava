@@ -405,6 +405,22 @@ def get_learner_fn(
 
             update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hstates_list)
             return update_state, final_epoch_avg_loss
+        
+        update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, updated_hstates_list)
+        update_state, loss_info = jax.lax.scan(
+            _update_epoch, update_state, None, config.system.ppo_epochs
+        )
+
+        params, opt_states, traj_batches_list, advantages_list, targets_list, key, updated_hstates_list = update_state
+        learner_state = LearnerState(
+            params,
+            opt_states,
+            key,
+            env_states_list,
+            timesteps_list,
+            updated_hstates_list,
+        )
+        return learner_state, (episode_metrics, loss_info)
 
 
     def learner_fn(learner_state: LearnerState) -> ExperimentOutput[LearnerState]:
