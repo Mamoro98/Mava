@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, Tuple, List
 
 import chex
 import flax
+import flax.jax_utils
 import hydra
 import jax
 import jax.numpy as jnp
@@ -694,13 +695,14 @@ def learner_setup(
     replicate_learner = flax.jax_utils.replicate(replicate_learner, devices=jax.devices())
 
     # do the same for the hidden state
-    joint_replicated_hstates = []
-    for hs in joint_hstates:
-        h_task_broadcasted = jax.tree_util.tree_map(broadcast, hs)
+    # joint_replicated_hstates = []
+    # for hs in joint_hstates:
+    #     h_task_broadcasted = tree.map(broadcast, hs)
         
-        h_task_replicated = flax.jax_utils.replicate(h_task_broadcasted, devices=jax.devices())
-        joint_replicated_hstates.append(h_task_replicated)
-
+    #     h_task_replicated = flax.jax_utils.replicate(h_task_broadcasted, devices=jax.devices())
+    #     joint_replicated_hstates.append(h_task_replicated)
+    broadcasted_hs = tree.map(broadcast,joint_hstates)
+    replicated_hs = flax.jax_utils.replicate(broadcasted_hs,devices=jax.devices())
 
     # Initialise learner state.
     params, opt_state,step_keys = replicate_learner
@@ -712,7 +714,7 @@ def learner_setup(
         key=step_keys,
         env_state=states_list,
         timestep=timesteps_list,
-        hstates=joint_replicated_hstates,
+        hstates=replicated_hs,
     )
 
     return learn, apply_fns[0], init_learner_state
