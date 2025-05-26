@@ -46,6 +46,7 @@ def discrete_train_decoder_fn(
     chunk_size: int,
     task_id: int,
     rng_key: Optional[chex.PRNGKey] = None,
+    max_action_dim:int=0
 ) -> Tuple[chex.Array, chex.Array]:
     """Parallel action sampling for discrete action spaces."""
     # Delete `rng_key` since it is not used in discrete action space
@@ -141,7 +142,6 @@ def discrete_autoregressive_act(
             obs_rep=obs_rep[:, i : i + 1, :],
             hstates=hstates,
             step_count=step_count[:, i : i + 1],
-            task_id = task_id
         )
 
 

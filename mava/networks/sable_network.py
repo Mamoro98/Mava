@@ -74,7 +74,7 @@ class EncodeBlock(nn.Module):
         output = self.ln2(x + self.ffn(x))
         return output, updated_hstate
 
-    def recurrent(self, x: chex.Array, hstate: chex.Array, step_count: chex.Array, task_id: int) -> chex.Array:
+    def recurrent(self, x: chex.Array, hstate: chex.Array, step_count: chex.Array,) -> chex.Array:
         """Applies Recurrent MultiScaleRetention."""
         ret, updated_hstate = self.retn.recurrent(
             key_n=x, query_n=x, value_n=x, hstate=hstate, step_count=step_count
@@ -153,7 +153,7 @@ class Encoder(nn.Module):
         return value, obs_rep, updated_hstate
 
     def recurrent(
-        self, obs: chex.Array, hstate: chex.Array, step_count: chex.Array, task_id: int
+        self, obs: chex.Array, hstate: chex.Array, step_count: chex.Array,
     ) -> Tuple[chex.Array, chex.Array, chex.Array]:
         """Apply recurrent encoding."""
 
@@ -168,7 +168,7 @@ class Encoder(nn.Module):
             hs = hstate[:, :, i]  # Get the hidden state for the current block
             # Apply the recurrent encoder block
             # passing the task id here is not necessary TODO removed later
-            obs_rep, hs_new = block.recurrent(self.ln(obs_rep), hs, step_count, task_id)
+            obs_rep, hs_new = block.recurrent(self.ln(obs_rep), hs, step_count)
             updated_hstate = updated_hstate.at[:, :, i].set(hs_new)
 
         value = self.head(obs_rep) 
@@ -247,7 +247,6 @@ class DecodeBlock(nn.Module):
         obs_rep: chex.Array,
         hstates: Tuple[chex.Array, chex.Array],
         step_count: chex.Array,
-        task_id: int
     ) -> Tuple[chex.Array, Tuple[chex.Array, chex.Array]]:
         """Applies Recurrent MultiScaleRetention."""
         hs1, hs2 = hstates
@@ -280,8 +279,6 @@ class Decoder(nn.Module):
     def setup(self) -> None:
         self.ln = nn.RMSNorm()
 
-        #
-        
         use_bias = self.tasks_action_space_type == _CONTINUOUS 
         self.action_encoder = nn.Sequential( 
             [
@@ -359,7 +356,6 @@ class Decoder(nn.Module):
         obs_rep: chex.Array,
         hstates: Tuple[chex.Array, chex.Array],
         step_count: chex.Array,
-        task_id: int,
     ) -> Tuple[chex.Array, Tuple[chex.Array, chex.Array]]:
         """Apply recurrent decoding."""
         updated_hstates = tree.map(jnp.zeros_like, hstates)
@@ -373,7 +369,7 @@ class Decoder(nn.Module):
         # Apply the decoder blocks
         for i, block in enumerate(self.blocks):
             hs = tree.map(lambda x, i=i: x[:, :, i], hstates)
-            x, hs_new = block.recurrent(x=x, obs_rep=obs_rep, hstates=hs, step_count=step_count, task_id=task_id)
+            x, hs_new = block.recurrent(x=x, obs_rep=obs_rep, hstates=hs, step_count=step_count,)
             updated_hstates = tree.map(
                 lambda x, y, j=i: x.at[:, :, j].set(y), updated_hstates, hs_new
             )
@@ -441,6 +437,7 @@ class SableNetwork(nn.Module):
         # this will allow me to have 3 functions for example, each one will deal with an env (task) and each env (task) will have different 
         # num of agents. 
         # I am also using partial to bake the chunck size
+        # I am making it a list because i need multiple decay matrices 
         self.train_decoder_fn = [
             partial(
                 discrete_train_decoder_fn,
@@ -457,7 +454,9 @@ class SableNetwork(nn.Module):
 
     def __call__(
         self,
-        observation: Observation,
+        obs,
+        legal_actions,
+        step_count,
         action: chex.Array,
         hstates: HiddenStates,
         dones: chex.Array,
@@ -465,16 +464,16 @@ class SableNetwork(nn.Module):
         rng_key: Optional[chex.PRNGKey] = None,
     ) -> Tuple[chex.Array, chex.Array, chex.Array]:
         """Training phase."""
-        obs, legal_actions, step_count = (
-            observation.agents_view,
-            observation.action_mask,
-            observation.step_count,
-        )
+        # obs, legal_actions, step_count = (
+        #     observation.agents_view,
+        #     observation.action_mask,
+        #     observation.step_count,
+        # )
         
         # already got chunk_sizes list baked in 
         value, obs_rep, _ = self.train_encoder_fn(
             encoder=self.encoder, obs=obs, hstate=hstates[0], dones=dones, step_count=step_count,task_id=task_id
-        )
+        )    
 
         # access the specific function needed for the task -> which have the num of agents for that task and chunk size list baked in 
         action_log, entropy = self.train_decoder_fn[task_id](
@@ -486,7 +485,8 @@ class SableNetwork(nn.Module):
             dones=dones,
             step_count=step_count,
             rng_key=rng_key,
-            task_id=task_id  
+            task_id=task_id ,
+            max_action_dim= self.max_action_dim
         )
 
         value = jnp.squeeze(value, axis=-1)
@@ -494,17 +494,14 @@ class SableNetwork(nn.Module):
 
     def get_actions(
         self,
-        observation: Observation,
+        obs: Observation,
+        legal_actions,
+        step_count,
         hstates: HiddenStates,
         key: chex.PRNGKey,
         task_id:int
     ) -> Tuple[chex.Array, chex.Array, chex.Array, HiddenStates]:
         """Inference phase."""
-        obs, legal_actions, step_count = (
-            observation.agents_view,
-            observation.action_mask,
-            observation.step_count,
-        )
 
         # Decay the hidden states: each timestep we decay the hidden states once
         decayed_hstates = tree.map(lambda x: x * self.decay_kappas, hstates)

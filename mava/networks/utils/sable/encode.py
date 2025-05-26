@@ -78,7 +78,7 @@ def act_encoder_fn(
         chunk_obs = obs[:, start_idx:end_idx]
         chunk_step_count = step_count[:, start_idx:end_idx]
         chunk_v_loc, chunk_obs_rep, decayed_hstate = encoder.recurrent(
-            chunk_obs, decayed_hstate, chunk_step_count, task_id
+            chunk_obs, decayed_hstate, chunk_step_count,
         )
         v_loc = v_loc.at[:, start_idx:end_idx].set(chunk_v_loc)
         obs_rep = obs_rep.at[:, start_idx:end_idx].set(chunk_obs_rep)

@@ -55,16 +55,6 @@ import os
 from flax.core import freeze, unfreeze
 
 
-from typing import NamedTuple 
-
-class NetworkInputObservation(NamedTuple): 
-    agents_view: chex.Array 
-    action_mask: chex.Array 
-    step_count: chex.Array  
-
-
-
-
 def get_learner_fn(
     envs: List[MarlEnv],
     apply_fns: Tuple[ActorApply, LearnerApply],
@@ -111,10 +101,8 @@ def get_learner_fn(
 
 
 
-            last_obs_pytree = last_timestep.observation #
-            max_obs_f_dim = config.system.max_obs_feature_dim 
-
-            
+            last_obs_pytree = last_timestep.observation 
+            max_obs_f_dim = config.system.max_obs_feature_dim  
             
             def _pad_obs_leaf_for_rollout(leaf_arr):
                 
@@ -126,30 +114,26 @@ def get_learner_fn(
                         pad_width = [(0,0)] * num_dims_to_keep + [(0, max_obs_f_dim - current_feat_dim)]
                         return jnp.pad(leaf_arr, pad_width)
                 return leaf_arr
+            def pad_mask_leaf(mask_array: jnp.ndarray) -> jnp.ndarray:
+                if hasattr(mask_array, "ndim") and mask_array.ndim >= 1:
+                    curr = mask_array.shape[-1]
+                    target = config.system.max_action_dim
+                    if curr < target:
+                        pad_width = [(0,0)] * (mask_array.ndim - 1) + [(0, target - curr)]
+                        # jnp.pad defaults to 0 => False for bool masks
+                        return jnp.pad(mask_array, pad_width)
+                return mask_array
+            
 
-
-
-
-
+            padded_mask = tree.map(pad_mask_leaf, last_obs_pytree.action_mask)
+            
             padded_agents_view = tree.map(_pad_obs_leaf_for_rollout, last_obs_pytree.agents_view)
-
-
-            obs_for_select_fn = padded_agents_view
-
-            obs_for_network = NetworkInputObservation(
-                agents_view=padded_agents_view,
-                action_mask=last_obs_pytree.action_mask, 
-                step_count=last_obs_pytree.step_count  
-            )
-                        
-
-
-
-
 
             action, log_prob, value, hstates = sable_action_select_fn(  # type: ignore
                 params,
-                obs_for_network,
+                padded_agents_view,
+                padded_mask,
+                last_obs_pytree.step_count,
                 hstates,
                 policy_key,
                 task_id = task_id
@@ -236,7 +220,7 @@ def get_learner_fn(
             original_last_action_mask = original_last_obs_pytree.action_mask
             original_last_step_count = original_last_obs_pytree.step_count
             
-            max_obs_f_dim = config.system.max_obs_feature_dim #
+            max_obs_f_dim = config.system.max_obs_feature_dim
 
             
             
@@ -248,37 +232,31 @@ def get_learner_fn(
                         pad_width = [(0,0)] * num_dims_to_keep + [(0, max_obs_f_dim - current_feat_dim)]
                         return jnp.pad(leaf_arr, pad_width)
                 return leaf_arr
+            
+            def pad_mask_leaf(mask_array: jnp.ndarray) -> jnp.ndarray:
+                if hasattr(mask_array, "ndim") and mask_array.ndim >= 1:
+                    curr = mask_array.shape[-1]
+                    target = config.system.max_action_dim
+                    if curr < target:
+                        pad_width = [(0,0)] * (mask_array.ndim - 1) + [(0, target - curr)]
+                        # jnp.pad defaults to 0 => False for bool masks
+                        return jnp.pad(mask_array, pad_width)
+                return mask_array
+            
 
-            padded_last_agents_view = jax.tree_util.tree_map(_pad_obs_leaf, original_last_agents_view)
+            padded_mask = tree.map(pad_mask_leaf, original_last_action_mask)
+
+            padded_last_agents_view = tree.map(_pad_obs_leaf, original_last_agents_view)
 
             _, _, last_val, _ = sable_action_select_fn(  
                 params_new, 
-                
                 padded_last_agents_view,    
-                original_last_action_mask,  
+                padded_mask,  
                 original_last_step_count,   
                 updated_hstates_new,        
                 last_val_key,               
                 task_id=i                   
             )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
             # _, _, last_val, _ = sable_action_select_fn(  # type: ignore
@@ -363,25 +341,46 @@ def get_learner_fn(
                                 pad_width = [(0,0)] * num_dims_to_keep + [(0, max_obs_f_dim - current_feat_dim)]
                                 return jnp.pad(leaf_arr, pad_width)
                         return leaf_arr
+                    
+                    def pad_mask_leaf(mask_array: jnp.ndarray) -> jnp.ndarray:
+                        if hasattr(mask_array, "ndim") and mask_array.ndim >= 1:
+                            curr = mask_array.shape[-1]
+                            target = config.system.max_action_dim
+                            if curr < target:
+                                pad_width = [(0,0)] * (mask_array.ndim - 1) + [(0, target - curr)]
+                                # jnp.pad defaults to 0 => False for bool masks
+                                return jnp.pad(mask_array, pad_width)
+                        return mask_array
+                    
+                    def pad_action_leaf(leaf_array: jnp.ndarray) -> jnp.ndarray:
+                        
+                        if leaf_array.ndim >= 1:
+                            curr_dim = leaf_array.shape[-1]
+                            target_dim = config.system.max_action_dim
+                            if curr_dim < target_dim:
+                                pad_width = [(0, 0)] * (leaf_array.ndim - 1) + [(0, target_dim - curr_dim)]
+                                return jnp.pad(leaf_array, pad_width)
+                        return leaf_array
+                    
+
+                    padded_mask = tree.map(pad_mask_leaf, traj_batch.obs.action_mask)
+
+
+                    padded_action = tree.map(pad_action_leaf, traj_batch.action)
+
 
                     
                     padded_obs_agents_view_for_loss = jax.tree_util.tree_map(_pad_obs_leaf_for_loss, traj_batch.obs.agents_view)
-
-                    
-                    
-                    
-                    
-                    obs_for_apply_fn = padded_obs_agents_view_for_loss
-
-
 
 
 
 
                     value, log_prob, entropy = sable_apply_fn(  # type: ignore
                         params,
-                        obs_for_apply_fn,
-                        traj_batch.action,
+                        padded_obs_agents_view_for_loss,
+                        padded_mask,
+                        traj_batch.obs.step_count,
+                        padded_action,
                         prev_hstates,
                         traj_batch.done,
                         task_id,
@@ -496,24 +495,7 @@ def get_learner_fn(
                 minibatches_list.append(minibatches)
                 prev_hstates_list.append(prev_hstates_new)
 
-            # UPDATE MINIBATCHES
-            # print("before losses")
-            # losses = []
-            # for i in range(len(minibatches_list)):
-            #     batch_info = (*minibatches_list[i], prev_hs_minibatch_list[i])
-            #     # (params, opt_states, entropy_key), loss_info =_update_minibatch((params, opt_states, key), batch_info)
-
-            #     def _update_minibatch_for_task_i(carry, dummy):
-            #         return _update_minibatch(carry, dummy,task_id=i)
-                
-            #     (params, opt_states, entropy_key), loss_info = jax.lax.scan(
-            #         _update_minibatch_for_task_i,
-            #         (params, opt_states, entropy_key),
-            #         batch_info,
-            #     )
-            #     losses.append(loss_info)
-
-
+    
 
             losses = []
             for i in range(len(minibatches_list)):
@@ -635,6 +617,7 @@ def learner_setup(
 
 
     max_obs_feature_dim = 0
+    max_action_dim = 0
 
     for env_instance in envs:
         sample_obs = env_instance.observation_spec.generate_value()
@@ -643,17 +626,17 @@ def learner_setup(
 
         max_obs_feature_dim = max(max_obs_feature_dim, current_task_feature_dim)
 
-
-
-    max_action_dim = 0
-    
-    for env_instance in envs:
         num_actions_for_task = env_instance.action_spec.num_values
+
         num_actions_for_task = num_actions_for_task[0]
+
         max_action_dim = max(max_action_dim, int(num_actions_for_task))
 
+
     
-    
+    # for smax 
+    # max_obs -> 537
+    # max_action -> 25
     config.system.max_obs_feature_dim = int(max_obs_feature_dim)
     config.system.max_action_dim = int(max_action_dim)
     
@@ -699,33 +682,6 @@ def learner_setup(
         use_grad_mean=True 
     )
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     padded_init_obs_list = []
     init_hs_list = []
     for i, env_task in enumerate(envs):
@@ -741,12 +697,24 @@ def learner_setup(
                     return jnp.pad(leaf_array, pad_width)
             return leaf_array 
 
+        def pad_mask_leaf(mask_array: jnp.ndarray) -> jnp.ndarray:
+            if hasattr(mask_array, "ndim") and mask_array.ndim >= 1:
+                curr = mask_array.shape[-1]
+                target = config.system.max_action_dim
+                if curr < target:
+                    pad_width = [(0,0)] * (mask_array.ndim - 1) + [(0, target - curr)]
+                    # jnp.pad defaults to 0 => False for bool masks
+                    return jnp.pad(mask_array, pad_width)
+            return mask_array
+
+
         padded_agents_view = tree.map(pad_init_obs_leaf, init_obs_unpadded.agents_view)
-        
+        padded_action_mask = tree.map(pad_mask_leaf, init_obs_unpadded.action_mask)
+
         
         padded_init_obs_unpadded = type(init_obs_unpadded)(
             agents_view=padded_agents_view,
-            action_mask=init_obs_unpadded.action_mask, 
+            action_mask=padded_action_mask, 
             step_count=init_obs_unpadded.step_count   
         )
 
@@ -758,6 +726,28 @@ def learner_setup(
         init_hs = tree.map(lambda x: x[0, jnp.newaxis], init_hs)
         init_hs_list.append(init_hs)
 
+
+    padded_init_actions_list = []
+
+    for i, env_task in enumerate(envs):
+        init_action_unpadded = env_task.action_spec.generate_value()
+        
+        def pad_init_action_leaf(leaf_array):
+            if leaf_array.ndim >= 1:
+                curr_dim = leaf_array.shape[-1]
+                if curr_dim < config.system.max_action_dim:
+                    pad_width = [(0,0)] * (leaf_array.ndim - 1) + [
+                        (0, config.system.max_action_dim - curr_dim)
+                    ]
+                    return jnp.pad(leaf_array, pad_width)
+            return leaf_array
+
+        padded_init_action = tree.map(pad_init_action_leaf, init_action_unpadded)
+
+        padded_init_action_batched = tree.map(lambda x: x[jnp.newaxis, ...],
+                                            padded_init_action)
+
+        padded_init_actions_list.append(padded_init_action_batched)
 
 
     # Initialise params and optimiser state using the custom function
