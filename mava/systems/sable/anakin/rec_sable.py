@@ -350,10 +350,8 @@ def get_learner_fn(
             batch_size = config.arch.num_envs
             # if batch size was 3 -> random.permutation -> ( 2, 1, 3) for example so we can shuffle the batch using this permutation
             batch_perm = jax.random.permutation(batch_shuffle_key, batch_size)
-            batch_list = []
             prev_hs_minibatch_list = []
             minibatches_list = []
-            prev_hstates_list = []
             for i in range(len(traj_batches_list)):
                 # collect the batch of the first task
                 batch = (traj_batches_list[i], advantages_list[i], targets_list[i])
@@ -436,7 +434,7 @@ def get_learner_fn(
             # get the final loss value / avg over all the losses
             final_epoch_avg_loss = {k: v / epoch_loss_count for k, v in epoch_total_loss_sum.items() if epoch_loss_count > 0}
 
-            update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hstates_list)
+            update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hs_minibatch_list)
             return update_state, final_epoch_avg_loss
         
         # until here, i have all the info i need for the update, i have the adv, the targets, the traj_batches, .. everything
