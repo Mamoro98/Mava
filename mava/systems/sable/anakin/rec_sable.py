@@ -433,8 +433,8 @@ def get_learner_fn(
                         epoch_loss_count += 1 
             # get the final loss value / avg over all the losses
             final_epoch_avg_loss = {k: v / epoch_loss_count for k, v in epoch_total_loss_sum.items() if epoch_loss_count > 0}
-
-            update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hs_minibatch_list)
+            # i am returning update_hstated_list here because of the mismatch of the scan operation  TODO ask ruan about this
+            update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, updated_hstates_list)
             return update_state, final_epoch_avg_loss
         
         # until here, i have all the info i need for the update, i have the adv, the targets, the traj_batches, .. everything
