@@ -91,7 +91,7 @@ def get_learner_fn(
         """
 
         def _env_step(
-            learner_state: LearnerState,task_id:int, _: Any
+            learner_state: LearnerState,task_id: int, env: MarlEnv, _: Any
         ) -> Tuple[LearnerState, Tuple[Transition, Metrics]]:
             """Step the environment."""
             params, opt_states, key, env_state, last_timestep, hstates = learner_state
@@ -100,8 +100,11 @@ def get_learner_fn(
             key, policy_key = jax.random.split(key)
 
             # Apply the actor network to get the action, log_prob, value and updated hstates.
+            # for all envs -> 64
             last_obs = last_timestep.observation
-            action, log_prob, value, hstates = sable_action_select_fn(  # type: ignore
+            # use sable get action method 
+            # now i have the action i should take, the value head, the new h_states and the log prob of that action
+            action, log_prob, value, hstates = sable_action_select_fn(
                 params,
                 last_obs,
                 hstates,
@@ -109,38 +112,46 @@ def get_learner_fn(
                 task_id = task_id
             )
 
-            # Step environment
+            # Step environment -> go to the next step using the action given from the network
             env_state, timestep = jax.vmap(env.step, in_axes=(0, 0))(env_state, action)
             # env_state, timestep = env.step(env_state, action)
 
-            # Reset hidden state if done.
+            # Reset hidden state if done. -> shape bool of num_envs
             done = timestep.last()
+            # expand it to 5 dims -> num_envs,1,1,1,1
             done = jnp.expand_dims(done, (1, 2, 3, 4))
+            # whereever done is true, we zero out its corresponding hs
             hstates = tree.map(lambda hs: jnp.where(done, jnp.zeros_like(hs), hs), hstates)
-
+            # make the done at the agent level, the shape of prev_done -> [num_envs,num_agents]
             prev_done = last_timestep.last().repeat(env.num_agents).reshape(num_envs, -1)
+
+            # pack the new transition again and return it 
             transition = Transition(
                 prev_done, action, value, timestep.reward, log_prob, last_timestep.observation
             )
+
+            # pack the learner state from the new timesteo data to be passed again as a carry
             learner_state = LearnerState(params, opt_states, key, env_state, timestep, hstates)
             return learner_state, (transition, timestep.extras["episode_metrics"])
 
-        # Copy old hidden states: to be used in the training loop
-
-        # Step environment for rollout length
-        # loop over lists
-        # def split_first_axis(x):
-        #     return list(jnp.split(x, x.shape[0], axis=0))
-
+        #get the info from the learner state created from the learner setup function
+        # env_state, last_timestep_old -> created using env.reset()
+        # also 5 hstates
+        # we have 5 env_states , timesteps, hstates -> one for each task
+        # each one of them have [num_envs, ... rest of shapes]
         params, opt_states, key, env_state_old, last_timestep_old, hstates_old = learner_state
-        # env_state_old = tree.map(split_first_axis, env_state_old)
-        # last_timestep_old = tree.map(split_first_axis, last_timestep_old)
-        # hstates_old = tree.map(split_first_axis, hstates_old)
-        # def slice_tree(x, i):
-        #     return tree.map(lambda y: y[i], x)
-        # print(f"env_state_old type : {type(env_state_old)}")
-        # print(f"hstates_old type : {type(hstates_old)}")
-        # print(f"last_timestep_old type : {type(last_timestep_old)}")
+        
+        # create lists to save the traj_batches, advantages, targets, and the new hstates, env_states and timesteps
+
+        # each traj_batch contains
+        # Transition(
+        # done    = timestep.last(), 
+        # action  = action, -> coming from sable_get_action
+        # value   = value, -> coming from sable forward pass in the encoder -> value head
+        # reward  = timestep.reward, -> coming from the env after i take the action
+        # log_prob= log_prob,-> coming from sable decoder -> needed for the advantages estimation
+        # obs     = obs     -> the next obs after taking the action
+        # )
         traj_batches_list= []
         advantages_list = []
         targets_list = []
@@ -150,15 +161,16 @@ def get_learner_fn(
         episode_metric_list = []
 
         for i in range(len(envs)):
+            # create a new learner state so we step in the env through it
             env_state_i = env_state_old[i]
             last_timestep_i = last_timestep_old[i]
             hstates_i = hstates_old[i]
             new_learner_state = LearnerState(params, opt_states, key, env_state_i, last_timestep_i, hstates_i)
-            # env is now global -> leads to jit silent error in the future when the env is different 
+            # env is now global -> leads to jit silent error in the future when the env is different -> need to be baked inside
             env = envs[i]
-
+            # baking env inside the function so it can be jitted
             def _env_step_for_task_i(carry, dummy):
-                return _env_step(carry, i, dummy)
+                return _env_step(carry, i, env ,dummy)
 
             new_learner_state, (traj_batch, episode_metrics) = jax.lax.scan(
                 f=_env_step_for_task_i,
@@ -167,12 +179,9 @@ def get_learner_fn(
                 length=config.system.rollout_length,
             )
 
+            # now we have new_learner_state -> the last timestep in the episode
+            # traj_batch -> all the trajectory of this batch (parallel envs)
             episode_metric_list.append(episode_metrics)
-
-            # _env_step_for_task_i = partial(_env_step, task_id = i)
-            # new_learner_state, (traj_batch, episode_metrics) = jax.lax.scan(
-            #    f = _env_step_for_task_i, init = new_learner_state, xs = None ,length=config.system.rollout_length
-            # ) 
 
             # Calculate advantage
             params_new, opt_states_new, key, env_state_new, last_timestep_new, updated_hstates_new = new_learner_state
@@ -180,13 +189,15 @@ def get_learner_fn(
             timesteps_list.append(last_timestep_new)
             
             key, last_val_key = jax.random.split(key)
+            
+            # get the last value using the get action and ignoring all other fields
             _, _, last_val, _ = sable_action_select_fn(  # type: ignore
                 params_new, last_timestep_new.observation, updated_hstates_new, last_val_key,task_id=i
             )
             
-            # last_done = last_timestep_new.last().repeat(env.num_agents).reshape(num_envs, -1)
+            # repeat the done to be on the agent level -> new shape -> num_envs, num_agents in that env
             last_done = jax.vmap(lambda x: x.repeat(config.system.num_agents[i], axis=-1))(last_timestep_new.last())
-            # print("heeeeeeeeer")
+
             def _calculate_gae(
                 traj_batch: Transition,
                 current_val: chex.Array,
@@ -198,19 +209,25 @@ def get_learner_fn(
                     carry: Tuple[chex.Array, chex.Array, chex.Array], transition: Transition
                 ) -> Tuple[Tuple[chex.Array, chex.Array, chex.Array], chex.Array]:
                     """Calculate the GAE for a single transition."""
+                    # each one of these has a shape of num_envs , num_agents -> scalar for each env and each agent
                     gae, next_value, next_done = carry
+                    # get these from the traj_batch -> same shape as above
                     done, value, reward = (
                         transition.done,
                         transition.value,
                         transition.reward,
                     )
+                    # GAE calculation
                     gamma = config.system.gamma
                     delta = reward + gamma * next_value * (1 - next_done) - value
                     gae = delta + gamma * config.system.gae_lambda * (1 - next_done) * gae
+
+                    # return the curray and the stack of all gaes
                     return (gae, value, done), gae
 
                 _, advantages = jax.lax.scan(
                     _get_advantages,
+                    # shape of current_val -> last_val -> num_envs,num_agents
                     (jnp.zeros_like(current_val), current_val, current_done),
                     traj_batch,
                     reverse=True,
@@ -218,6 +235,9 @@ def get_learner_fn(
                 )
                 return advantages, advantages + traj_batch.value
             
+            # calculate the advantages -> given all the traj_batches for this task and also the last state value and done.
+            # shape of advantages -> [rollout_length , num_envs, num_agents] -> for each rollout, each env, each agent will have one adv
+            # adv = target - values -> then target = adv + values -> should have the same shape as the envs
             advantages, targets = _calculate_gae(traj_batch, last_val, last_done)
             advantages_list.append(advantages)
             targets_list.append(targets)
@@ -326,41 +346,46 @@ def get_learner_fn(
             key, batch_shuffle_key, agent_shuffle_key, entropy_key = jax.random.split(key, 4)
 
             # Shuffle batch
+            # the batch is the num_envs
             batch_size = config.arch.num_envs
+            # if batch size was 3 -> random.permutation -> ( 2, 1, 3) for example so we can shuffle the batch using this permutation
             batch_perm = jax.random.permutation(batch_shuffle_key, batch_size)
             batch_list = []
             prev_hs_minibatch_list = []
             minibatches_list = []
             prev_hstates_list = []
             for i in range(len(traj_batches_list)):
+                # collect the batch of the first task
                 batch = (traj_batches_list[i], advantages_list[i], targets_list[i])
-                # print(tree.map(lambda x: x.shape, batch))
+                # shuffle tha batch along the env dim
                 batch = tree.map(lambda x: jnp.take(x, batch_perm, axis=1), batch)
 
-                # Shuffle hidden states
-                
+                # Shuffle hidden states along the env dim
                 prev_hstates_new = tree.map(lambda x: jnp.take(x, batch_perm, axis=0), prev_hstates[i])
 
-                # Shuffle agents
+                # Shuffle agents -> create the key to shuffle along the agent dim
                 agent_perm = jax.random.permutation(agent_shuffle_key, config.system.num_agents[i])
+                # shuffle the batch along the agent dim
                 batch = tree.map(lambda x: jnp.take(x, agent_perm, axis=2), batch)
 
                 # Concatenate time and agents
+                # after concatinating the rollout and the agent -> shape will be -> [num_env , rollout*num_agents]
                 batch = tree.map(concat_time_and_agents, batch)
 
                 # Split into minibatches
+                # spilt the batch -> shape (num_envs, rollout*num_agents) to (num_minibatches , num_envs/num_minibatches, rollout*num_agents)
                 minibatches = tree.map(
                     lambda x: jnp.reshape(x, (config.system.num_minibatches, -1, *x.shape[1:])),
                     batch,
                 )
+                # same here , prev_hstates_new -> (num_envs, .. rest of the dims of the hs)
+                # not it is reshaped to (num_minibatches, num_envs/num_minibatches, .... rest of the dims of the hs)
                 prev_hs_minibatch = tree.map(
                     lambda x: jnp.reshape(x, (config.system.num_minibatches, -1, *x.shape[1:])),
                     prev_hstates_new,
                 )
-                batch_list.append(batch)
                 prev_hs_minibatch_list.append(prev_hs_minibatch)
                 minibatches_list.append(minibatches)
-                prev_hstates_list.append(prev_hstates_new)
 
 
             N_minibatches = config.system.num_minibatches
@@ -371,45 +396,54 @@ def get_learner_fn(
 
             for i in range(N_minibatches):
                 for j in range(N_tasks):
-                        traj_data_all_mbs_for_task, adv_data_all_mbs_for_task, targets_data_all_mbs_for_task = minibatches_list[j]
+                        # extract the data for the specific task
+                        traj_data_for_task, adv_data_for_task, targets_data_for_task = minibatches_list[j]
        
-                        #
-                        current_traj_data_mb = jax.tree_util.tree_map(
-                            lambda leaf_all_mbs: leaf_all_mbs[i],
-                            traj_data_all_mbs_for_task
+                        # extract the data for the specific minibatch from the data of the specific task
+                        
+                        # now here we have the current traj data for the task j and mini batch i
+                        current_traj_data_mb = tree.map(
+                            lambda x: x[i],
+                            traj_data_for_task
                         )
-                        current_adv_data_mb = adv_data_all_mbs_for_task[i]
-                        current_targets_data_mb = targets_data_all_mbs_for_task[i]
+
+                        # same for the advantages and targets
+                        current_adv_data_mb = adv_data_for_task[i]
+                        current_targets_data_mb = targets_data_for_task[i]
                         
-                        
-                        hs_data_all_mbs_for_task = prev_hs_minibatch_list[j]
-                        current_hs_data_mb = jax.tree_util.tree_map(
-                            lambda leaf_all_mbs: leaf_all_mbs[i],
-                            hs_data_all_mbs_for_task
+                        # get the hidden state of the task
+                        hs_data_for_task = prev_hs_minibatch_list[j]
+
+                        # get the hs of the specific minibatch -> now we have the hs of the task and minibatch
+                        current_hs_data_mb = tree.map(
+                            lambda x: x[i],
+                            hs_data_for_task
                         )
-                        
+                        # make the data 
                         batch_info_single_mb_task = (current_traj_data_mb, current_adv_data_mb, current_targets_data_mb, current_hs_data_mb)
 
-                                   
+                        # run the update minibatch function for the single task mini batch data and get the loss and the updated params and opt_state
                         (params, opt_states, key), loss_info_one_task_one_mb = _update_minibatch(
                             (params, opt_states, key), 
                             batch_info_single_mb_task,
                             task_id=j 
                         )             
 
-                        
+                        # loop through the keys and the values of the loss -> accumilate all the losses for each minibatch and task
                         for k_loss, v_loss in loss_info_one_task_one_mb.items():
                             epoch_total_loss_sum[k_loss] += v_loss
                         epoch_loss_count += 1 
-
+            # get the final loss value / avg over all the losses
             final_epoch_avg_loss = {k: v / epoch_loss_count for k, v in epoch_total_loss_sum.items() if epoch_loss_count > 0}
 
             update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hstates_list)
             return update_state, final_epoch_avg_loss
         
+        # until here, i have all the info i need for the update, i have the adv, the targets, the traj_batches, .. everything
+        # i need to update the params and opt_state now
         update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, updated_hstates_list)
         update_state, loss_info = jax.lax.scan(
-            _update_epoch, update_state, None, config.system.ppo_epochs
+            _update_epoch, update_state, None, config.system.ppo_epochs # ppo_epochs now = 2 -> expecting 2 at the start of the dims
         )
 
         params, opt_states, traj_batches_list, advantages_list, targets_list, key, updated_hstates_list = update_state
@@ -421,6 +455,7 @@ def get_learner_fn(
             timesteps_list,
             updated_hstates_list,
         )
+        # TODO trace the episode metrics in the evaluation part
         return learner_state, (episode_metrics, loss_info)
 
 
@@ -530,72 +565,17 @@ def learner_setup(
         use_grad_mean=True 
     )
 
-    def pad_observation_object(
-        obs ,
-        target_n_agents,
-        current_n_agents,
-        target_feature_dim,
-        current_feature_dim
-    ):
-
-        agent_padding_needed = target_n_agents - current_n_agents
-
-        # --- Pad agents_view ---
-        padded_agents_view = obs.agents_view
-        # 1. Pad agent dimension
-        if agent_padding_needed > 0:
-            agent_pad_shape = list(obs.agents_view.shape)
-            agent_pad_shape[0] = agent_padding_needed
-            padding_agents = jnp.zeros(agent_pad_shape, dtype=obs.agents_view.dtype)
-            padded_agents_view = jnp.concatenate([padded_agents_view, padding_agents], axis=0)
-        # 2. Pad feature dimension
-        feature_padding_needed = target_feature_dim - current_feature_dim
-        if feature_padding_needed < 0:
-            raise ValueError("Target feature dim cannot be smaller than current.")
-        if feature_padding_needed > 0:
-            feature_pad_shape = list(padded_agents_view.shape) # Use shape after agent padding
-            feature_pad_shape[1] = feature_padding_needed
-            padding_features = jnp.zeros(feature_pad_shape, dtype=obs.agents_view.dtype)
-            padded_agents_view = jnp.concatenate([padded_agents_view, padding_features], axis=1)
-
-        # --- Pad action_mask ---
-        padded_action_mask = obs.action_mask
-        if agent_padding_needed > 0:
-            agent_pad_shape = list(obs.action_mask.shape)
-            agent_pad_shape[0] = agent_padding_needed
-            padding_agents_mask = jnp.full(agent_pad_shape, False, dtype=jnp.bool_) # Pad masks with False
-            padded_action_mask = jnp.concatenate([padded_action_mask, padding_agents_mask], axis=0)
-
-        # --- Pad step_count ---
-        padded_step_count = obs.step_count
-        if agent_padding_needed > 0:
-            agent_pad_shape = list(obs.step_count.shape)
-            agent_pad_shape[0] = agent_padding_needed
-            padding_agents_step = jnp.zeros(agent_pad_shape, dtype=obs.step_count.dtype) # Pad step count with 0
-            padded_step_count = jnp.concatenate([padded_step_count, padding_agents_step], axis=0)
-
-        # --- Create and return a new Observation object ---
-        # Use the same class that was passed in
-        # Note: If Observation has other fields, you might need to copy them too: **obs._asdict()
-        return type(obs)(
-            agents_view=padded_agents_view,
-            action_mask=padded_action_mask,
-            step_count=padded_step_count,
-            # Add other fields from the original obs if they exist and should be preserved
-            # e.g., grid=obs.grid if that's part of the Observation type
-        )
-
-
+ 
     # getting the initial observations and hidden states so we can initialize the params of the network
     inti_obs_list = []
     init_hs_list = []
     for idx in range(len(envs)):
         # shape is Observation(agents_view=(10, 64), action_mask=(10, 5), step_count=(10,)) for the first task
         # WARNING, it is different from task to task
-        init_obs_unpadded = envs[idx].observation_spec.generate_value()
+        init_obs = envs[idx].observation_spec.generate_value()
         # adding a batch axis 
         # Observation(agents_view=(1, 10, 64), action_mask=(1, 10, 5), step_count=(1, 10))
-        init_obs = tree.map(lambda x: x[jnp.newaxis, ...], init_obs_unpadded)
+        init_obs = tree.map(lambda x: x[jnp.newaxis, ...], init_obs)
         inti_obs_list.append(init_obs)
     
         # HiddenStates(encoder=(64, 1, 4, 64, 64), decoder_self_retn=(64, 1, 4, 64, 64), decoder_cross_retn=(64, 1, 4, 64, 64))
@@ -657,6 +637,7 @@ def learner_setup(
         # 128*2 
         task_keys_flat = keys_per_task_flat[i]
         # reset all the parallel envs
+        # shapes should be (num_env*update_batch_size , rest of shapes)
         env_states, timesteps = jax.vmap(env.reset, in_axes=(0))(task_keys_flat)
         # reshape each timesteps and env_states in the parallel envs
         # now each of the timesteos and env_states has the shape of  [ (n_devices * num_envs * update_batch_size), ..rest of shapes ]
