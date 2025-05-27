@@ -24,6 +24,8 @@ from flax import linen as nn
 # C: number of agents per chunk of sequence
 
 
+# this function is used to encode the obs and hs using the encoder
+# used in the training phase -> PPO updates and it uses the encoder feedforward method (__call__)
 def train_encoder_fn(
     encoder: nn.Module,
     obs: chex.Array,
@@ -34,6 +36,7 @@ def train_encoder_fn(
     task_id: int,
 ) -> Tuple[chex.Array, chex.Array, chex.Array]:
     """Chunkwise encoding for discrete action spaces."""
+    # first 2 dimensions of obs are batch size and sequence length
     B, S = obs.shape[:2]
     v_loc = jnp.zeros((B, S, 1))
     obs_rep = jnp.zeros((B, S, encoder.net_config.embed_dim))

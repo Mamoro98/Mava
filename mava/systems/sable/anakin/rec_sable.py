@@ -386,56 +386,40 @@ def get_learner_fn(
                 minibatches_list.append(minibatches)
 
 
-            N_minibatches = config.system.num_minibatches
-            N_tasks = len(minibatches_list)
+            losses = []
+            for i in range(len(minibatches_list)):
+                batch_info = (*minibatches_list[i], prev_hs_minibatch_list[i])
+                # (params, opt_states, entropy_key), loss_info =_update_minibatch((params, opt_states, key), batch_info)
 
-            epoch_total_loss_sum = { "total_loss": 0.0, "value_loss": 0.0, "actor_loss": 0.0, "entropy": 0.0 }
-            epoch_loss_count = 0
+                def _update_minibatch_for_task_i(carry, dummy):
+                                return _update_minibatch(carry, dummy,task_id=i)
+                
+                (params, opt_states, entropy_key), loss_info = jax.lax.scan(
+                    _update_minibatch_for_task_i,
+                    (params, opt_states, entropy_key),
+                    batch_info,
+                )
+                losses.append(loss_info)
 
-            for i in range(N_minibatches):
-                for j in range(N_tasks):
-                        # extract the data for the specific task
-                        traj_data_for_task, adv_data_for_task, targets_data_for_task = minibatches_list[j]
-       
-                        # extract the data for the specific minibatch from the data of the specific task
-                        
-                        # now here we have the current traj data for the task j and mini batch i
-                        current_traj_data_mb = tree.map(
-                            lambda x: x[i],
-                            traj_data_for_task
-                        )
+            # take the mean over the task dimensions of the loss info
+            print(f'losses {type(losses)}')
+            total_losses = {}
+            # total_losses = {
+            #     k: sum(loss[k] for loss in losses) / len(losses)
+            #     for k in losses[0].keys()
+            #     }
+            for i in range(len(losses)):
+                for j in losses[i].keys():
+                    if j not in total_losses.keys():
+                        total_losses[j] = 0
+                    total_losses[j] = total_losses[j] + losses[i][j]
+            for i in total_losses.keys():
+                total_losses[i] = total_losses[i] / len(losses)
 
-                        # same for the advantages and targets
-                        current_adv_data_mb = adv_data_for_task[i]
-                        current_targets_data_mb = targets_data_for_task[i]
-                        
-                        # get the hidden state of the task
-                        hs_data_for_task = prev_hs_minibatch_list[j]
 
-                        # get the hs of the specific minibatch -> now we have the hs of the task and minibatch
-                        current_hs_data_mb = tree.map(
-                            lambda x: x[i],
-                            hs_data_for_task
-                        )
-                        # make the data 
-                        batch_info_single_mb_task = (current_traj_data_mb, current_adv_data_mb, current_targets_data_mb, current_hs_data_mb)
 
-                        # run the update minibatch function for the single task mini batch data and get the loss and the updated params and opt_state
-                        (params, opt_states, key), loss_info_one_task_one_mb = _update_minibatch(
-                            (params, opt_states, key), 
-                            batch_info_single_mb_task,
-                            task_id=j 
-                        )             
-
-                        # loop through the keys and the values of the loss -> accumilate all the losses for each minibatch and task
-                        for k_loss, v_loss in loss_info_one_task_one_mb.items():
-                            epoch_total_loss_sum[k_loss] += v_loss
-                        epoch_loss_count += 1 
-            # get the final loss value / avg over all the losses
-            final_epoch_avg_loss = {k: v / epoch_loss_count for k, v in epoch_total_loss_sum.items() if epoch_loss_count > 0}
-            # i am returning update_hstated_list here because of the mismatch of the scan operation  TODO ask ruan about this
             update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, updated_hstates_list)
-            return update_state, final_epoch_avg_loss
+            return update_state, total_losses
         
         # until here, i have all the info i need for the update, i have the adv, the targets, the traj_batches, .. everything
         # i need to update the params and opt_state now
@@ -557,7 +541,7 @@ def learner_setup(
             optax.adam(lr, eps=1e-5),
         ),
         # gradient accumilation happens every num_tasks -> the opt will step every n_tasks
-        every_k_schedule= len(envs),
+        every_k_schedule=  config.system.num_minibatches,
         # if true -> first we take the average of the graidents and then step using that avg -> emulate large batch size
         # if false -> gradients for each num_task step will be summed 
         use_grad_mean=True 

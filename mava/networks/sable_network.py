@@ -39,6 +39,9 @@ from mava.utils.network_utils import _CONTINUOUS, _DISCRETE
 from typing import Sequence 
 
 
+# task policy heads for the decoder 
+# for each task, give its head a unique task name
+# the returned logits will = the number of actions for that task which is given through the class 
 class TaskPolicyHeadMLP(nn.Module):
     embed_dim: int 
     action_dim: int 
@@ -62,6 +65,10 @@ class TaskPolicyHeadMLP(nn.Module):
         return logits
 
 
+
+# task obs heads for the encoder 
+# for each task, give its head a unique task name
+# the returned embedding will = the embed_length 
 class TaskObsEncoderMLP(nn.Module):
     embed_dim: int
     name: Optional[str] = None
@@ -82,6 +89,9 @@ class TaskObsEncoderMLP(nn.Module):
         return x
 
 
+# task value heads for the encoder 
+# for each task, give its head a unique task name
+# the returned scalar will = the value of that observation
 class TaskValueHeadMLP(nn.Module):
 
     embed_dim: int
@@ -105,6 +115,9 @@ class TaskValueHeadMLP(nn.Module):
         return value
 
 
+# task action heads for the decoder 
+# for each task, give its head a unique task name
+# the returned embedding will = the emedding dim
 class TaskActionEncoderMLP(nn.Module):
     embed_dim: int  
     action_dim: int 
@@ -129,7 +142,7 @@ class EncodeBlock(nn.Module):
 
     net_config: SableNetworkConfig
     memory_config: DictConfig
-    all_n_agents_list: list[int]
+    all_n_agents_list: list[int] #used for the retention -> multiple decay matrices
 
     def setup(self) -> None:
         self.ln1 = nn.RMSNorm()
@@ -147,7 +160,11 @@ class EncodeBlock(nn.Module):
         )
 
         self.ffn = SwiGLU(self.net_config.embed_dim, self.net_config.embed_dim)
-
+    
+    # multi head retention block -> each head -> simple retention
+    # skip connection with rmsnorm
+    # skip connection -> original x swiglued and the output of the last rmsnorm 
+    # rmsnorm the output 
     def __call__(
         self, x: chex.Array, hstate: chex.Array, dones: chex.Array, step_count: chex.Array, task_id: int,
     ) -> chex.Array:
@@ -159,7 +176,7 @@ class EncodeBlock(nn.Module):
         output = self.ln2(x + self.ffn(x))
         return output, updated_hstate
 
-    def recurrent(self, x: chex.Array, hstate: chex.Array, step_count: chex.Array, task_id: int) -> chex.Array:
+    def recurrent(self, x: chex.Array, hstate: chex.Array, step_count: chex.Array) -> chex.Array:
         """Applies Recurrent MultiScaleRetention."""
         ret, updated_hstate = self.retn.recurrent(
             key_n=x, query_n=x, value_n=x, hstate=hstate, step_count=step_count
@@ -245,7 +262,7 @@ class Encoder(nn.Module):
             hs = hstate[:, :, i]  # Get the hidden state for the current block
             # Apply the recurrent encoder block
             # passing the task id here is not necessary TODO removed later
-            obs_rep, hs_new = block.recurrent(self.ln(obs_rep), hs, step_count, task_id)
+            obs_rep, hs_new = block.recurrent(self.ln(obs_rep), hs, step_count)
             updated_hstate = updated_hstate.at[:, :, i].set(hs_new)
 
         # same as the call func
@@ -326,7 +343,6 @@ class DecodeBlock(nn.Module):
         obs_rep: chex.Array,
         hstates: Tuple[chex.Array, chex.Array],
         step_count: chex.Array,
-        task_id: int
     ) -> Tuple[chex.Array, Tuple[chex.Array, chex.Array]]:
         """Applies Recurrent MultiScaleRetention."""
         hs1, hs2 = hstates
@@ -448,7 +464,7 @@ class Decoder(nn.Module):
         # Apply the decoder blocks
         for i, block in enumerate(self.blocks):
             hs = tree.map(lambda x, i=i: x[:, :, i], hstates)
-            x, hs_new = block.recurrent(x=x, obs_rep=obs_rep, hstates=hs, step_count=step_count, task_id=task_id)
+            x, hs_new = block.recurrent(x=x, obs_rep=obs_rep, hstates=hs, step_count=step_count,)
             updated_hstates = tree.map(
                 lambda x, y, j=i: x.at[:, :, j].set(y), updated_hstates, hs_new
             )
