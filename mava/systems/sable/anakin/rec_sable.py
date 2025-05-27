@@ -352,6 +352,7 @@ def get_learner_fn(
             batch_perm = jax.random.permutation(batch_shuffle_key, batch_size)
             prev_hs_minibatch_list = []
             minibatches_list = []
+            prev_hs_shuffled = []
             for i in range(len(traj_batches_list)):
                 # collect the batch of the first task
                 batch = (traj_batches_list[i], advantages_list[i], targets_list[i])
@@ -384,6 +385,7 @@ def get_learner_fn(
                 )
                 prev_hs_minibatch_list.append(prev_hs_minibatch)
                 minibatches_list.append(minibatches)
+                prev_hs_shuffled.append(prev_hstates_new)
 
 
             losses = []
@@ -418,7 +420,7 @@ def get_learner_fn(
 
 
 
-            update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, updated_hstates_list)
+            update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hs_shuffled)
             return update_state, total_losses
         
         # until here, i have all the info i need for the update, i have the adv, the targets, the traj_batches, .. everything
