@@ -568,7 +568,9 @@ class SableNetwork(nn.Module):
             observation.action_mask,
             observation.step_count,
         )
-        
+        # hstates -> 0 -> encoder hidden state 
+        # hstates -> 1 -> decoder self retention hidden state
+        # hstates -> 2 -> decoder cross retention hidden state
         # already got chunk_sizes list baked in 
         value, obs_rep, _ = self.train_encoder_fn(
             encoder=self.encoder, obs=obs, hstate=hstates[0], dones=dones, step_count=step_count,task_id=task_id

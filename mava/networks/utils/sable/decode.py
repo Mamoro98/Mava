@@ -37,7 +37,7 @@ _MIN_SCALE = 1e-3
 def discrete_train_decoder_fn(
     decoder: nn.Module,
     obs_rep: chex.Array,
-    action: chex.Array,
+    action: chex.Array, # coming from the traj collection phase
     legal_actions: chex.Array,
     hstates: chex.Array,
     dones: chex.Array,
@@ -50,14 +50,18 @@ def discrete_train_decoder_fn(
     """Parallel action sampling for discrete action spaces."""
     # Delete `rng_key` since it is not used in discrete action space
     del rng_key
-
+    # one hot encode the prev actions
+    # shape of the action is batch_size, sequence_length because each agent in the batch and sequence has an action
+    # shifted_actions is shape of batch_size, sequence_length, num_actions + 1 because we add a start token for the first action in the sequence
     shifted_actions = get_shifted_discrete_actions(action, legal_actions, n_agents=n_agents)
+    # logit is the output of the decoder, it is the logits for each action in the sequence
     logit = jnp.zeros_like(legal_actions, dtype=jnp.float32)
     #[t0a0,t0a1,t0a2,t1a0,t1a1,t1a2,t2a0,t2a1,t2a2] chunksize =9
     #chunk=3
     #num_chunks=3
     # Apply the decoder per chunk
     # we need to decide chunk size per task 
+    # same logic as in the encoder
     num_chunks = shifted_actions.shape[1] // chunk_size[task_id]
     for chunk_id in range(0, num_chunks):
         start_idx = chunk_id * chunk_size[task_id]
@@ -76,14 +80,20 @@ def discrete_train_decoder_fn(
             task_id = task_id,
         )
         logit = logit.at[:, start_idx:end_idx].set(chunk_logit)
-
+    # where legal actions are true, we keep the logits, otherwise we set them to a very low value
     masked_logits = jnp.where(
         legal_actions,
         logit,
         jnp.finfo(jnp.float32).min,
     )
-
+    # we create a categorical distribution from the logits
+    # logits are the output of the decoder, they are the logits for each action in the sequence
+    # action is the action taken by the agent in the sequence
+    # we use the logits to create a distribution and then sample from it
     distribution = distrax.Categorical(logits=masked_logits)
+    # action_log_prob is the log probability of the action taken by the agent in the sequence
+    # entropy is the entropy of the distribution, it is used to encourage exploration
+    # and prevent the agent from getting stuck in a local minimum
     action_log_prob = distribution.log_prob(action)
 
     return action_log_prob, distribution.entropy()
@@ -93,7 +103,6 @@ def get_shifted_discrete_actions(
     action: chex.Array, legal_actions: chex.Array, n_agents: int
 ) -> chex.Array:
     """Get the shifted discrete action sequence for predicting the next action."""
-    print(legal_actions.shape)
     B, S, A= legal_actions.shape
 
     # Create a shifted action sequence for predicting the next action
@@ -126,15 +135,17 @@ def discrete_autoregressive_act(
 ) -> Tuple[chex.Array, chex.Array, chex.Array]:
     B, N, A = legal_actions.shape
     # print(f"legal actions",legal_actions.shape)
-
+    # same as above
     shifted_actions = jnp.zeros((B, N, A + 1))
     shifted_actions = shifted_actions.at[:, 0, 0].set(1)
-
+    # we are in the acting phase so we need just one action per agent
     output_action = jnp.zeros((B, N, 1))
     output_action_log = jnp.zeros_like(output_action)
 
     # Apply the decoder autoregressively
+    # loop through the agents
     for i in range(N):
+        # use recurrent method because we are in the acting phase
         logit, hstates = decoder.recurrent(
             action=shifted_actions[:, i : i + 1, :],
             obs_rep=obs_rep[:, i : i + 1, :],
@@ -142,6 +153,7 @@ def discrete_autoregressive_act(
             step_count=step_count[:, i : i + 1],
             task_id = task_id
         )
+        # same logic as above (training phase)
         masked_logits = jnp.where(
             legal_actions[:, i : i + 1, :],
             logit,

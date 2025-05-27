@@ -225,6 +225,7 @@ class MultiScaleRetention(nn.Module):
     decay_scaling_factor: float = 1.0
 
     def setup(self) -> None:
+        # we need this because we will concatenate the heads later and the result should equal to embed_dim
         assert self.embed_dim % self.n_head == 0, "embed_dim must be divisible by n_head"
         self.head_size = self.embed_dim // self.n_head
 
@@ -235,6 +236,7 @@ class MultiScaleRetention(nn.Module):
         self.decay_kappas = self.decay_kappas * self.decay_scaling_factor
 
         # Initialise the weights and group norm
+        # TODO
         self.w_g = self.param(
             "w_g",
             nn.initializers.normal(stddev=1 / self.embed_dim),
@@ -248,6 +250,7 @@ class MultiScaleRetention(nn.Module):
         self.group_norm = nn.GroupNorm(num_groups=self.n_head)
 
         # Initialise the retention mechanisms
+        # create multiple retentions head each with its own decay_kappa
         self.retention_heads = [
             SimpleRetention(
                 self.embed_dim,
@@ -265,7 +268,8 @@ class MultiScaleRetention(nn.Module):
 
     def __call__(
         self,
-        key: Array,
+        # key, query, value -> the obs rep in the encoder / action rep in the decoder
+        key: Array, 
         query: Array,
         value: Array,
         hstate: Array,
@@ -274,14 +278,19 @@ class MultiScaleRetention(nn.Module):
         task_id: int,
     ) -> Tuple[Array, Array]:
         """Chunkwise (default) representation of the multi-scale retention mechanism"""
+        # C -> sequence length  = rollout * num_agents
+        # B -> batch size (num_parallel_envs)
         B, C, _ = value.shape
 
         # Positional encoding of the current step
         if self.memory_config.timestep_positional_encoding:
             key, query, value = self.pe(key, query, value, step_count)
-
+        
+        # prepare the output of the retention
         ret_output = jnp.zeros((B, C, self.embed_dim), dtype=value.dtype)
         for head in range(self.n_head):
+            # call the SimpleRetention for each head
+            # TODO i am here
             y, new_hs = self.retention_heads[head](key, query, value, hstate[:, head], dones,task_id)
             ret_output = ret_output.at[
                 :, :, self.head_size * head : self.head_size * (head + 1)

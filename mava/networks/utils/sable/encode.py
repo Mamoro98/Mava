@@ -37,25 +37,42 @@ def train_encoder_fn(
 ) -> Tuple[chex.Array, chex.Array, chex.Array]:
     """Chunkwise encoding for discrete action spaces."""
     # first 2 dimensions of obs are batch size and sequence length
+    # because in the loss function we concat the time and agent dimensions = sequence length
     B, S = obs.shape[:2]
+    # hold the value estimate for each agent*timestep in the sequence
     v_loc = jnp.zeros((B, S, 1))
+    # observation representation
     obs_rep = jnp.zeros((B, S, encoder.net_config.embed_dim))
 
     # Apply the encoder per chunk
+    # chunk_size is a list contains -> rollout * num_agents which means the number of steps each agents take in the sequence 
+    # so if we have 5 agents and 10 steps, the sequence will be [1a1, 1a2, 1a3, 1a4, 1a5] for the first step and [2a1, 2a2, 2a3, 2a4, 2a5] for the second step and so on
+    # we divide the sequence length by the chunk size to get the number of chunks
     num_chunks = S // chunk_size[task_id]
+    # we loop through the chunks
     for chunk_id in range(0, num_chunks):
+        # start_idx is the chunk_id multiplied by the chunk size because we need to take all agents data.
         start_idx = chunk_id * chunk_size[task_id]
+        # same for end_idx, we take the next chunk size
         end_idx = (chunk_id + 1) * chunk_size[task_id]
         # Chunk obs, dones, and step_count
+        # we keep all the batch (num_envs) and slice the sequence length to the start and end of the chunk
         chunk_obs = obs[:, start_idx:end_idx]
         chunk_dones = dones[:, start_idx:end_idx]
         chunk_step_count = step_count[:, start_idx:end_idx]
+
+        # now we have a chunk ready, we apply the encoder forward pass to get the value,obs_rep and hs -> we are passing the task id to know which head we will choose
         chunk_v_loc, chunk_obs_rep, hstate = encoder(
             chunk_obs, hstate, chunk_dones, chunk_step_count,task_id
         )
+        # we set the chunk value and obs_rep to the v_loc and obs_rep
         v_loc = v_loc.at[:, start_idx:end_idx].set(chunk_v_loc)
         obs_rep = obs_rep.at[:, start_idx:end_idx].set(chunk_obs_rep)
 
+    # we return the value of all the sequence, the obs_rep and the hidden_state
+    # the value is the value estimate for each agent at each timestep in the sequence
+    # the obs_rep is used in the decoder to decode the actions
+    # we dont use the hstate in the decoder, because it has its own hidden state
     return v_loc, obs_rep, hstate
 
 
@@ -68,18 +85,23 @@ def act_encoder_fn(
     task_id: int,
 ) -> Tuple[chex.Array, chex.Array, chex.Array]:
     """Chunkwise encoding for ff-Sable and for discrete action spaces."""
+    # first 2 dimensions of obs are batch size and number of agents
     B, C = obs.shape[:2]
+    # create empty arrays for value estimate and observation representation
     v_loc = jnp.zeros((B, C, 1))
     obs_rep = jnp.zeros((B, C, encoder.net_config.embed_dim))
 
     # Apply the encoder per chunk
+    # same as above but we chunk with the number of agents so here we will have just one chunk for all agents 
     num_chunks = C // chunk_size[task_id]
     for chunk_id in range(0, num_chunks):
+        # same as above
         start_idx = chunk_id * chunk_size[task_id]
         end_idx = (chunk_id + 1) * chunk_size[task_id]
         # Chunk obs and step_count
         chunk_obs = obs[:, start_idx:end_idx]
         chunk_step_count = step_count[:, start_idx:end_idx]
+        # we use recurrent method of the encoder because we are in the acting phase
         chunk_v_loc, chunk_obs_rep, decayed_hstate = encoder.recurrent(
             chunk_obs, decayed_hstate, chunk_step_count, task_id
         )
