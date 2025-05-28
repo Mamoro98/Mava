@@ -140,6 +140,8 @@ def get_learner_fn(
         # we have 5 env_states , timesteps, hstates -> one for each task
         # each one of them have [num_envs, ... rest of shapes]
         params, opt_states, key, env_state_old, last_timestep_old, hstates_old = learner_state
+        # store the previous hstates to be used later in the update step
+        prev_hstates_list = tree.map(lambda x: jnp.copy(x), learner_state.hstates)
         
         # create lists to save the traj_batches, advantages, targets, and the new hstates, env_states and timesteps
 
@@ -184,7 +186,7 @@ def get_learner_fn(
             episode_metric_list.append(episode_metrics)
 
             # Calculate advantage
-            params_new, opt_states_new, key, env_state_new, last_timestep_new, updated_hstates_new = new_learner_state
+            params_new, opt_states_new, key, env_state_new, last_timestep_new, updated_hstates = new_learner_state
             env_states_list.append(env_state_new)
             timesteps_list.append(last_timestep_new)
             
@@ -192,7 +194,7 @@ def get_learner_fn(
             
             # get the last value using the get action and ignoring all other fields
             _, _, last_val, _ = sable_action_select_fn(  # type: ignore
-                params_new, last_timestep_new.observation, updated_hstates_new, last_val_key,task_id=i
+                params_new, last_timestep_new.observation, updated_hstates, last_val_key,task_id=i
             )
             
             # repeat the done to be on the agent level -> new shape -> num_envs, num_agents in that env
@@ -242,7 +244,7 @@ def get_learner_fn(
             advantages_list.append(advantages)
             targets_list.append(targets)
             traj_batches_list.append(traj_batch)
-            updated_hstates_list.append(updated_hstates_new)
+            updated_hstates_list.append(updated_hstates)
             # num_tasks = learner_state.env_state.shape[0]
 
         def _update_epoch(update_state: Tuple, _: Any) -> Tuple:
@@ -352,7 +354,6 @@ def get_learner_fn(
             batch_perm = jax.random.permutation(batch_shuffle_key, batch_size)
             prev_hs_minibatch_list = []
             minibatches_list = []
-            prev_hs_shuffled = []
             for i in range(len(traj_batches_list)):
                 # collect the batch of the first task
                 batch = (traj_batches_list[i], advantages_list[i], targets_list[i])
@@ -385,7 +386,6 @@ def get_learner_fn(
                 )
                 prev_hs_minibatch_list.append(prev_hs_minibatch)
                 minibatches_list.append(minibatches)
-                prev_hs_shuffled.append(prev_hstates_new)
 
 
             N_minibatches = config.system.num_minibatches
@@ -429,17 +429,17 @@ def get_learner_fn(
 
             final_epoch_avg_loss = {k: v / epoch_loss_count for k, v in epoch_total_loss_sum.items() if epoch_loss_count > 0}
 
-            update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hs_shuffled)
+            update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hstates)
             return update_state, final_epoch_avg_loss
         
         # until here, i have all the info i need for the update, i have the adv, the targets, the traj_batches, .. everything
         # i need to update the params and opt_state now
-        update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, updated_hstates_list)
+        update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hstates_list)
         update_state, loss_info = jax.lax.scan(
             _update_epoch, update_state, None, config.system.ppo_epochs # ppo_epochs now = 2 -> expecting 2 at the start of the dims
         )
 
-        params, opt_states, traj_batches_list, advantages_list, targets_list, key, updated_hstates_list = update_state
+        params, opt_states, traj_batches_list, advantages_list, targets_list, key, _ = update_state
         learner_state = LearnerState(
             params,
             opt_states,
