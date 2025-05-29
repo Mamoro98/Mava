@@ -399,7 +399,7 @@ def get_learner_fn(
                         traj_data_all_mbs_for_task, adv_data_all_mbs_for_task, targets_data_all_mbs_for_task = minibatches_list[j]
        
                         #
-                        current_traj_data_mb = jax.tree_util.tree_map(
+                        current_traj_data_mb = tree.map(
                             lambda leaf_all_mbs: leaf_all_mbs[i],
                             traj_data_all_mbs_for_task
                         )
@@ -408,7 +408,7 @@ def get_learner_fn(
                         
                         
                         hs_data_all_mbs_for_task = prev_hs_minibatch_list[j]
-                        current_hs_data_mb = jax.tree_util.tree_map(
+                        current_hs_data_mb = tree.map(
                             lambda leaf_all_mbs: leaf_all_mbs[i],
                             hs_data_all_mbs_for_task
                         )
@@ -645,38 +645,73 @@ def learner_setup(
         states_list.append(env_states)
         timesteps_list.append(timesteps)
 
+    # joint_hstates = []
+
+    # for _ in range(len(envs)):
+    #     # get initial hidden state
+    #     init_hstates = get_init_hidden_state(config.network.net_config, config.arch.num_envs)
+
+    #     joint_hstates.append(init_hstates)
+
+    # # generate a unique key for each device and each batch
+    # key, step_keys = jax.random.split(key)
+
+
+    # # replicate params and opt state through devices
+    # replicate_learner = (params, opt_state,step_keys) 
+    # broadcast = lambda x: jnp.broadcast_to(x, (config.system.update_batch_size, *x.shape))
+
+    # # make identical copies of params and opt_state 
+    # # now each batch and each device will have the same params and opt_state
+    # replicate_learner = tree.map(broadcast, replicate_learner)
+
+    # # copy the replicated_learner to the physical devices
+    # replicate_learner = flax.jax_utils.replicate(replicate_learner, devices=jax.devices())
+
+    # # do the same for the hidden state
+    # # joint_replicated_hstates = []
+    # # for hs in joint_hstates:
+    # #     h_task_broadcasted = tree.map(broadcast, hs)
+        
+    # #     h_task_replicated = flax.jax_utils.replicate(h_task_broadcasted, devices=jax.devices())
+    # #     joint_replicated_hstates.append(h_task_replicated)
+    # broadcasted_hs = tree.map(broadcast,joint_hstates)
+    # replicated_hs = flax.jax_utils.replicate(broadcasted_hs,devices=jax.devices())
+
     joint_hstates = []
 
+
     for _ in range(len(envs)):
-        # get initial hidden state
         init_hstates = get_init_hidden_state(config.network.net_config, config.arch.num_envs)
 
+        # Load model from checkpoint if specified.
+        
+        if config.logger.checkpointing.load_model:
+            loaded_checkpoint = Checkpointer(
+                model_name=config.logger.system_name,
+                **config.logger.checkpointing.load_args,  # Other checkpoint args
+            )
+            # Restore the learner state from the checkpoint
+            restored_params, restored_hstates = loaded_checkpoint.restore_params(
+                input_params=params, restore_hstates=True, THiddenState=HiddenStates
+            )
+            # Update the params and hidden states
+            params = restored_params
+            init_hstates = restored_hstates if restored_hstates else init_hstates
+
+        key, step_keys = jax.random.split(key)
+        replicate_learner = (params, opt_state, step_keys)
+        # Duplicate learner for update_batch_size.  
+        broadcast = lambda x: jnp.broadcast_to(x, (config.system.update_batch_size, *x.shape))
+        replicate_learner = tree.map(broadcast, replicate_learner)
+        
+        init_hstates = tree.map(broadcast, init_hstates)
+        # Duplicate learner across devices.
+        replicate_learner = flax.jax_utils.replicate(replicate_learner, devices=jax.devices())
+        init_hstates = flax.jax_utils.replicate(init_hstates, devices=jax.devices())
         joint_hstates.append(init_hstates)
 
-    # generate a unique key for each device and each batch
-    key, step_keys = jax.random.split(key)
 
-
-    # replicate params and opt state through devices
-    replicate_learner = (params, opt_state,step_keys) 
-    broadcast = lambda x: jnp.broadcast_to(x, (config.system.update_batch_size, *x.shape))
-
-    # make identical copies of params and opt_state 
-    # now each batch and each device will have the same params and opt_state
-    replicate_learner = tree.map(broadcast, replicate_learner)
-
-    # copy the replicated_learner to the physical devices
-    replicate_learner = flax.jax_utils.replicate(replicate_learner, devices=jax.devices())
-
-    # do the same for the hidden state
-    # joint_replicated_hstates = []
-    # for hs in joint_hstates:
-    #     h_task_broadcasted = tree.map(broadcast, hs)
-        
-    #     h_task_replicated = flax.jax_utils.replicate(h_task_broadcasted, devices=jax.devices())
-    #     joint_replicated_hstates.append(h_task_replicated)
-    broadcasted_hs = tree.map(broadcast,joint_hstates)
-    replicated_hs = flax.jax_utils.replicate(broadcasted_hs,devices=jax.devices())
 
     # Initialise learner state.
     params, opt_state,step_keys = replicate_learner
@@ -688,7 +723,7 @@ def learner_setup(
         key=step_keys,
         env_state=states_list,
         timestep=timesteps_list,
-        hstates=replicated_hs,
+        hstates=joint_hstates,
     )
 
     return learn, apply_fns[0], init_learner_state
