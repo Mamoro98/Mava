@@ -596,7 +596,7 @@ def learner_setup(
             optax.adam(lr, eps=1e-5),
         ),
         # gradient accumilation happens every num_tasks -> the opt will step every n_tasks
-        every_k_schedule=  num_tasks,
+        every_k_schedule = config.system.num_minibatches,
         # if true -> first we take the average of the graidents and then step using that avg -> emulate large batch size
         # if false -> gradients for each num_task step will be summed 
         use_grad_mean=True 
