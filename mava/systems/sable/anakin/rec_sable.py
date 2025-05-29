@@ -426,7 +426,7 @@ def get_learner_fn(
 
 
 
-            update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hstates_list)
+            update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hstates)
             return update_state, total_losses
         
             # N_minibatches = config.system.num_minibatches
