@@ -6,53 +6,54 @@ scenario_config_path: mava/configs/env/scenario
 scenario: 
   name: "placeholder" 
   task_config: {} 
-  max_grid_dimension: 10
-  max_n_agents: 10
-
-# eval_metric: win_rate
-# implicit_agent_id: False
-# log_win_rate: True
-
-default_task_kwargs:
-    time_limit: 500 
 
 tasks:
-  - name: con-10x10x10a
+  - name: tiny-4ag
     scenario_key: env.scenario.name 
-    scenario_value: Connector-v2
-    scenario_file_name: con-10x10x10a
-    eval_metric: "episode_return"
-    implicit_agent_id: False
-    log_win_rate: True
-    aggregate_rewards: True
-    task_kwargs:
-      {}
-
-  - name: smacv2_10_units
-    scenario_key: env.scenario.name 
-    scenario_value: Smax
-    scenario_file_name: smacv2_10_units
-    eval_metric: "win_rate"
-    implicit_agent_id: False
-    log_win_rate: True
-    task_kwargs: 
-      see_enemy_actions: True   
-      walls_cause_death: True 
-      attack_mode: "closest" 
-
+    scenario_value: RobotWarehouse-v0
+    scenario_file_name: tiny-4ag 
 
   - name: small-4ag
     scenario_key: env.scenario.name 
     scenario_value: RobotWarehouse-v0
-    scenario_file_name: small-4ag
-    eval_metric: "episode_return"
-    implicit_agent_id: False 
-    log_win_rate: False
-    task_kwargs:
-      time_limit: 500
+    scenario_file_name: small-4ag 
+
+  - name: medium-4ag
+    scenario_key: env.scenario.name 
+    scenario_value: RobotWarehouse-v0
+    scenario_file_name: medium-4ag 
+
+
+  - name: large-4ag
+    scenario_key: env.scenario.name 
+    scenario_value: RobotWarehouse-v0
+    scenario_file_name: large-4ag 
+
+
+  - name: xlarge-4ag
+    scenario_key: env.scenario.name 
+    scenario_value: RobotWarehouse-v0
+    scenario_file_name: small-4ag 
+
 
 
 envs_name:  
-  - name: VectorConnector  
-  - name: Smax
+  - name: RobotWarehouse  
   - name: RobotWarehouse
+  - name: RobotWarehouse  
+  - name: RobotWarehouse  
+  - name: RobotWarehouse
+
+
+eval_metric: episode_return
+implicit_agent_id: False
+log_win_rate: False
+kwargs:
+  time_limit: 500
+
+
+# tiny-4ag
+# small-4ag
+# medium-4ag
+# large-4ag
+# xlarge-4ag
