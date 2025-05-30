@@ -578,7 +578,7 @@ def learner_setup(
             optax.clip_by_global_norm(config.system.max_grad_norm),
             optax.adam(lr, eps=1e-5),
         ),
-        every_k_schedule=len(envs),  # Number of steps to accumulate
+        every_k_schedule= config.system.num_minibatches,  # Number of steps to accumulate
         use_grad_mean=True  # Whether to average or sum gradients
     )
 
