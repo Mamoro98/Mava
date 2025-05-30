@@ -656,34 +656,16 @@ def learner_setup(
     # Initialise hidden state.
     joint_hstates = []
 
+    key, step_keys = jax.random.split(key)
+    replicate_learner = (params, opt_state, step_keys)
+    # Duplicate learner for update_batch_size.  
+    broadcast = lambda x: jnp.broadcast_to(x, (config.system.update_batch_size, *x.shape))
+    replicate_learner = tree.map(broadcast, replicate_learner)
+    replicate_learner = flax.jax_utils.replicate(replicate_learner, devices=jax.devices())
+
     for _ in range(len(envs)):
         init_hstates = get_init_hidden_state(config.network.net_config, config.arch.num_envs)
-
-        # Load model from checkpoint if specified.
-        
-        if config.logger.checkpointing.load_model:
-            loaded_checkpoint = Checkpointer(
-                model_name=config.logger.system_name,
-                **config.logger.checkpointing.load_args,  # Other checkpoint args
-            )
-            # Restore the learner state from the checkpoint
-            restored_params, restored_hstates = loaded_checkpoint.restore_params(
-                input_params=params, restore_hstates=True, THiddenState=HiddenStates
-            )
-            # Update the params and hidden states
-            params = restored_params
-            init_hstates = restored_hstates if restored_hstates else init_hstates
-
-    # Define params to be replicated across devices and batches.
-        key, step_keys = jax.random.split(key)
-        replicate_learner = (params, opt_state, step_keys)
-        # Duplicate learner for update_batch_size.  
-        broadcast = lambda x: jnp.broadcast_to(x, (config.system.update_batch_size, *x.shape))
-        replicate_learner = tree.map(broadcast, replicate_learner)
-        
         init_hstates = tree.map(broadcast, init_hstates)
-        # Duplicate learner across devices.
-        replicate_learner = flax.jax_utils.replicate(replicate_learner, devices=jax.devices())
         init_hstates = flax.jax_utils.replicate(init_hstates, devices=jax.devices())
         joint_hstates.append(init_hstates)
 
@@ -778,8 +760,6 @@ def run_experiment(_config: DictConfig) -> float:
 
                 OmegaConf.update(task_cfg, scenario_key, scenario_value, merge=True)
                 OmegaConf.update(task_cfg.env.scenario, "env_kwargs", {}, merge=True)
-
-                task_cfg['env']['env_name'] = task_cfg['env']['envs_name'][i]['name'] 
                     
                 
 
