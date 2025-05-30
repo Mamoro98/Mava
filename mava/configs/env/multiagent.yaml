@@ -33,7 +33,7 @@ tasks:
   - name: xlarge-4ag
     scenario_key: env.scenario.name 
     scenario_value: RobotWarehouse-v0
-    scenario_file_name: small-4ag 
+    scenario_file_name: xlarge-4ag 
 
 
 

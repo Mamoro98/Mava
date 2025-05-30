@@ -578,7 +578,7 @@ def learner_setup(
             optax.clip_by_global_norm(config.system.max_grad_norm),
             optax.adam(lr, eps=1e-5),
         ),
-        every_k_schedule= config.system.num_minibatches,  # Number of steps to accumulate
+        every_k_schedule= num_tasks,  # Number of steps to accumulate
         use_grad_mean=True  # Whether to average or sum gradients
     )
 
@@ -829,7 +829,7 @@ def run_experiment(_config: DictConfig) -> float:
 
     # Setup learner.
     learn, sable_execution_fn, learner_state = learner_setup(envs, (key, net_key), config)
-
+    
     # Setup evaluator.
     def make_rec_sable_act_fn(actor_apply_fn: ActorApply, task_id:int) -> EvalActFn:
         _hidden_state = "hidden_state"
