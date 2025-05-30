@@ -750,17 +750,17 @@ def run_experiment(_config: DictConfig) -> float:
                 scenario_cfg = OmegaConf.load(scenario_file_path)
 
 
+
                 task_cfg['env']['scenario']['task_config'] = scenario_cfg['task_config']
                 scenario_key = task_spec.get('scenario_key')
                 scenario_value = task_spec.get('scenario_value')
+
                 OmegaConf.update(task_cfg, scenario_key, scenario_value, merge=True)
                 OmegaConf.update(task_cfg.env.scenario, "env_kwargs", {}, merge=True)
 
-
-                task_cfg['env']['eval_metric'] = task_spec['eval_metric']
-                task_cfg['env']['log_win_rate'] = task_spec['log_win_rate']
-                task_cfg['env']['implicit_agent_id'] = task_spec['implicit_agent_id']
-                task_cfg['env']['kwargs'] = task_spec['task_kwargs']
+                task_cfg['env']['env_name'] = task_cfg['env']['envs_name'][i]['name'] 
+                    
+                
 
 
                     
