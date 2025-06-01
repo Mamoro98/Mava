@@ -13,45 +13,45 @@ default_task_kwargs:
     {}
 
 tasks:
-  # - name: tiny-4ag
-  #   scenario_key: env.scenario.name
-  #   scenario_value: RobotWarehouse-v0
-  #   scenario_file_name: tiny-4ag
-  #   eval_metric: "episode_return" 
-  #   implicit_agent_id: False 
-  #   log_win_rate: False 
-  #   task_kwargs: 
-  #     time_limit: 500  
+  - name: tiny-4ag
+    scenario_key: env.scenario.name
+    scenario_value: RobotWarehouse-v0
+    scenario_file_name: tiny-4ag
+    eval_metric: "episode_return" 
+    implicit_agent_id: False 
+    log_win_rate: False 
+    task_kwargs: 
+      time_limit: 500  
 
-  # - name: small-4ag
-  #   scenario_key: env.scenario.name
-  #   scenario_value: RobotWarehouse-v0
-  #   scenario_file_name: small-4ag
-  #   eval_metric: "episode_return"
-  #   implicit_agent_id: False
-  #   log_win_rate: False
-  #   task_kwargs: 
-  #     time_limit: 500 
+  - name: small-4ag
+    scenario_key: env.scenario.name
+    scenario_value: RobotWarehouse-v0
+    scenario_file_name: small-4ag
+    eval_metric: "episode_return"
+    implicit_agent_id: False
+    log_win_rate: False
+    task_kwargs: 
+      time_limit: 500 
 
-  # - name: medium-4ag
-  #   scenario_key: env.scenario.name
-  #   scenario_value: RobotWarehouse-v0
-  #   scenario_file_name: medium-4ag
-  #   eval_metric: "episode_return"
-  #   implicit_agent_id: False
-  #   log_win_rate: False
-  #   task_kwargs: 
-  #     time_limit: 500 
+  - name: medium-4ag
+    scenario_key: env.scenario.name
+    scenario_value: RobotWarehouse-v0
+    scenario_file_name: medium-4ag
+    eval_metric: "episode_return"
+    implicit_agent_id: False
+    log_win_rate: False
+    task_kwargs: 
+      time_limit: 500 
 
-  # - name: large-4ag
-  #   scenario_key: env.scenario.name
-  #   scenario_value: RobotWarehouse-v0
-  #   scenario_file_name: large-4ag
-  #   eval_metric: "episode_return"
-  #   implicit_agent_id: False
-  #   log_win_rate: False
-  #   task_kwargs: 
-  #     time_limit: 500 
+  - name: large-4ag
+    scenario_key: env.scenario.name
+    scenario_value: RobotWarehouse-v0
+    scenario_file_name: large-4ag
+    eval_metric: "episode_return"
+    implicit_agent_id: False
+    log_win_rate: False
+    task_kwargs: 
+      time_limit: 500 
 
   - name: xlarge-4ag
     scenario_key: env.scenario.name
@@ -65,7 +65,7 @@ tasks:
 
 envs_name:
   - name: RobotWarehouse
-  # - name: RobotWarehouse
-  # - name: RobotWarehouse
-  # - name: RobotWarehouse
-  # - name: RobotWarehouse
+  - name: RobotWarehouse
+  - name: RobotWarehouse
+  - name: RobotWarehouse
+  - name: RobotWarehouse
