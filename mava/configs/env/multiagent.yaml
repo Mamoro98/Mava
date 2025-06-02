@@ -13,85 +13,85 @@ default_task_kwargs:
     {}
 
 tasks:
-  - name: con-5x5x3a
-    scenario_key: env.scenario.name
-    scenario_value: Connector-v2
-    scenario_file_name: con-5x5x3a
-    eval_metric: "episode_return" 
-    implicit_agent_id: False 
-    log_win_rate: True 
-    aggregate_rewards: True 
-    task_kwargs: {} 
+  # - name: con-5x5x3a
+  #   scenario_key: env.scenario.name
+  #   scenario_value: Connector-v2
+  #   scenario_file_name: con-5x5x3a
+  #   eval_metric: "episode_return" 
+  #   implicit_agent_id: False 
+  #   log_win_rate: True 
+  #   aggregate_rewards: True 
+  #   task_kwargs: {} 
 
-  - name: con-7x7x5a
-    scenario_key: env.scenario.name
-    scenario_value: Connector-v2
-    scenario_file_name: con-7x7x5a
-    eval_metric: "episode_return"
-    implicit_agent_id: False
-    log_win_rate: True
-    aggregate_rewards: True
-    task_kwargs: {}
+  # - name: con-7x7x5a
+  #   scenario_key: env.scenario.name
+  #   scenario_value: Connector-v2
+  #   scenario_file_name: con-7x7x5a
+  #   eval_metric: "episode_return"
+  #   implicit_agent_id: False
+  #   log_win_rate: True
+  #   aggregate_rewards: True
+  #   task_kwargs: {}
 
-  - name: con-8x8x7a
-    scenario_key: env.scenario.name
-    scenario_value: Connector-v2
-    scenario_file_name: con-8x8x7a
-    eval_metric: "episode_return"
-    implicit_agent_id: False
-    log_win_rate: True
-    aggregate_rewards: True
-    task_kwargs: {}
+  # - name: con-8x8x7a
+  #   scenario_key: env.scenario.name
+  #   scenario_value: Connector-v2
+  #   scenario_file_name: con-8x8x7a
+  #   eval_metric: "episode_return"
+  #   implicit_agent_id: False
+  #   log_win_rate: True
+  #   aggregate_rewards: True
+  #   task_kwargs: {}
 
-  - name: con-10x10x10a
-    scenario_key: env.scenario.name
-    scenario_value: Connector-v2
-    scenario_file_name: con-10x10x10a
-    eval_metric: "episode_return"
-    implicit_agent_id: False
-    log_win_rate: True
-    aggregate_rewards: True
-    task_kwargs: {}
+  # - name: con-10x10x10a
+  #   scenario_key: env.scenario.name
+  #   scenario_value: Connector-v2
+  #   scenario_file_name: con-10x10x10a
+  #   eval_metric: "episode_return"
+  #   implicit_agent_id: False
+  #   log_win_rate: True
+  #   aggregate_rewards: True
+  #   task_kwargs: {}
 
-  - name: con-11x11x13a
-    scenario_key: env.scenario.name
-    scenario_value: Connector-v2
-    scenario_file_name: con-11x11x13a
-    eval_metric: "episode_return"
-    implicit_agent_id: False
-    log_win_rate: True
-    aggregate_rewards: True
-    task_kwargs: {}
+  # - name: con-11x11x13a
+  #   scenario_key: env.scenario.name
+  #   scenario_value: Connector-v2
+  #   scenario_file_name: con-11x11x13a
+  #   eval_metric: "episode_return"
+  #   implicit_agent_id: False
+  #   log_win_rate: True
+  #   aggregate_rewards: True
+  #   task_kwargs: {}
 
-  - name: con-12x12x15a
-    scenario_key: env.scenario.name
-    scenario_value: Connector-v2
-    scenario_file_name: con-12x12x15a
-    eval_metric: "episode_return"
-    implicit_agent_id: False
-    log_win_rate: True
-    aggregate_rewards: True
-    task_kwargs: {}
+  # - name: con-12x12x15a
+  #   scenario_key: env.scenario.name
+  #   scenario_value: Connector-v2
+  #   scenario_file_name: con-12x12x15a
+  #   eval_metric: "episode_return"
+  #   implicit_agent_id: False
+  #   log_win_rate: True
+  #   aggregate_rewards: True
+  #   task_kwargs: {}
 
-  - name: con-13x13x17a
-    scenario_key: env.scenario.name
-    scenario_value: Connector-v2
-    scenario_file_name: con-13x13x17a
-    eval_metric: "episode_return"
-    implicit_agent_id: False
-    log_win_rate: True
-    aggregate_rewards: True
-    task_kwargs: {}
+  # - name: con-13x13x17a
+  #   scenario_key: env.scenario.name
+  #   scenario_value: Connector-v2
+  #   scenario_file_name: con-13x13x17a
+  #   eval_metric: "episode_return"
+  #   implicit_agent_id: False
+  #   log_win_rate: True
+  #   aggregate_rewards: True
+  #   task_kwargs: {}
 
-  - name: con-14x14x21a
-    scenario_key: env.scenario.name
-    scenario_value: Connector-v2
-    scenario_file_name: con-14x14x21a
-    eval_metric: "episode_return"
-    implicit_agent_id: False
-    log_win_rate: True
-    aggregate_rewards: True
-    task_kwargs: {}
+  # - name: con-14x14x21a
+  #   scenario_key: env.scenario.name
+  #   scenario_value: Connector-v2
+  #   scenario_file_name: con-14x14x21a
+  #   eval_metric: "episode_return"
+  #   implicit_agent_id: False
+  #   log_win_rate: True
+  #   aggregate_rewards: True
+  #   task_kwargs: {}
 
   - name: con-15x15x23a
     scenario_key: env.scenario.name
@@ -105,11 +105,11 @@ tasks:
 
 envs_name:
   - name: VectorConnector
-  - name: VectorConnector
-  - name: VectorConnector
-  - name: VectorConnector
-  - name: VectorConnector
-  - name: VectorConnector
-  - name: VectorConnector
-  - name: VectorConnector
-  - name: VectorConnector
+  # - name: VectorConnector
+  # - name: VectorConnector
+  # - name: VectorConnector
+  # - name: VectorConnector
+  # - name: VectorConnector
+  # - name: VectorConnector
+  # - name: VectorConnector
+  # - name: VectorConnector
