@@ -20,7 +20,7 @@ tasks:
     eval_metric: "episode_return" 
     implicit_agent_id: False 
     log_win_rate: True 
-    aggregate_rewards: True 
+    aggregate_rewards: False 
     task_kwargs: {} 
 
   - name: con-7x7x5a
@@ -30,7 +30,7 @@ tasks:
     eval_metric: "episode_return"
     implicit_agent_id: False
     log_win_rate: True
-    aggregate_rewards: True
+    aggregate_rewards: False
     task_kwargs: {}
 
   - name: con-8x8x7a
@@ -40,7 +40,7 @@ tasks:
     eval_metric: "episode_return"
     implicit_agent_id: False
     log_win_rate: True
-    aggregate_rewards: True
+    aggregate_rewards: False
     task_kwargs: {}
 
   - name: con-10x10x10a
@@ -50,7 +50,7 @@ tasks:
     eval_metric: "episode_return"
     implicit_agent_id: False
     log_win_rate: True
-    aggregate_rewards: True
+    aggregate_rewards: False
     task_kwargs: {}
 
   - name: con-11x11x13a
@@ -60,7 +60,7 @@ tasks:
     eval_metric: "episode_return"
     implicit_agent_id: False
     log_win_rate: True
-    aggregate_rewards: True
+    aggregate_rewards: False
     task_kwargs: {}
 
   - name: con-12x12x15a
@@ -70,7 +70,7 @@ tasks:
     eval_metric: "episode_return"
     implicit_agent_id: False
     log_win_rate: True
-    aggregate_rewards: True
+    aggregate_rewards: False
     task_kwargs: {}
 
   - name: con-13x13x17a
@@ -80,7 +80,7 @@ tasks:
     eval_metric: "episode_return"
     implicit_agent_id: False
     log_win_rate: True
-    aggregate_rewards: True
+    aggregate_rewards: False
     task_kwargs: {}
 
   - name: con-14x14x21a
@@ -90,7 +90,7 @@ tasks:
     eval_metric: "episode_return"
     implicit_agent_id: False
     log_win_rate: True
-    aggregate_rewards: True
+    aggregate_rewards: False
     task_kwargs: {}
 
   - name: con-15x15x23a
@@ -100,7 +100,7 @@ tasks:
     eval_metric: "episode_return"
     implicit_agent_id: False
     log_win_rate: True
-    aggregate_rewards: True
+    aggregate_rewards: False
     task_kwargs: {}
 
 envs_name:
