@@ -7,7 +7,7 @@ net_config:
 memory_config:
   type: "rec_sable" # Type of the network.
   # --- Memory  factor ---
-  decay_scaling_factor: 1 # Decay scaling factor for the kappa parameter: kappa = kappa * decay_scaling_factor
+  decay_scaling_factor: 0.5 # Decay scaling factor for the kappa parameter: kappa = kappa * decay_scaling_factor
   # --- Positional encoding ---
   timestep_positional_encoding: True # Timestamp positional encoding for Sable memory.
   # --- Chunking ---

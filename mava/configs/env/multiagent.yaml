@@ -1,115 +1,71 @@
 defaults:
   - _self_
 
-scenario_config_path: mava/configs/env/scenario/added_scenarios
+scenario_config_path: mava/configs/env/scenario
 
 scenario:
   name: "placeholder"
   task_config: {}
-  max_grid_dimension: 15
-  max_n_agents: 23
+  # max_grid_dimension: 10 
+  # max_n_agents: 10 
 
 default_task_kwargs:
     {}
 
 tasks:
-  - name: con-5x5x3a
+  - name: tiny-4ag
     scenario_key: env.scenario.name
-    scenario_value: Connector-v2
-    scenario_file_name: con-5x5x3a
+    scenario_value: RobotWarehouse-v0
+    scenario_file_name: tiny-4ag
     eval_metric: "episode_return" 
     implicit_agent_id: False 
     log_win_rate: True 
-    aggregate_rewards: False 
-    task_kwargs: {} 
+    task_kwargs: 
+      time_limit: 500  
 
-  - name: con-7x7x5a
+  - name: small-4ag
     scenario_key: env.scenario.name
-    scenario_value: Connector-v2
-    scenario_file_name: con-7x7x5a
+    scenario_value: RobotWarehouse-v0
+    scenario_file_name: small-4ag
     eval_metric: "episode_return"
     implicit_agent_id: False
     log_win_rate: True
-    aggregate_rewards: False
-    task_kwargs: {}
+    task_kwargs: 
+      time_limit: 500 
 
-  - name: con-8x8x7a
+  - name: medium-4ag
     scenario_key: env.scenario.name
-    scenario_value: Connector-v2
-    scenario_file_name: con-8x8x7a
+    scenario_value: RobotWarehouse-v0
+    scenario_file_name: medium-4ag
     eval_metric: "episode_return"
     implicit_agent_id: False
     log_win_rate: True
-    aggregate_rewards: False
-    task_kwargs: {}
+    task_kwargs: 
+      time_limit: 500 
 
-  - name: con-10x10x10a
+  - name: large-4ag
     scenario_key: env.scenario.name
-    scenario_value: Connector-v2
-    scenario_file_name: con-10x10x10a
+    scenario_value: RobotWarehouse-v0
+    scenario_file_name: large-4ag
     eval_metric: "episode_return"
     implicit_agent_id: False
     log_win_rate: True
-    aggregate_rewards: False
-    task_kwargs: {}
+    task_kwargs: 
+      time_limit: 500 
 
-  - name: con-11x11x13a
+  - name: xlarge-4ag
     scenario_key: env.scenario.name
-    scenario_value: Connector-v2
-    scenario_file_name: con-11x11x13a
+    scenario_value: RobotWarehouse-v0
+    scenario_file_name: xlarge-4ag 
     eval_metric: "episode_return"
     implicit_agent_id: False
     log_win_rate: True
-    aggregate_rewards: False
-    task_kwargs: {}
-
-  - name: con-12x12x15a
-    scenario_key: env.scenario.name
-    scenario_value: Connector-v2
-    scenario_file_name: con-12x12x15a
-    eval_metric: "episode_return"
-    implicit_agent_id: False
-    log_win_rate: True
-    aggregate_rewards: False
-    task_kwargs: {}
-
-  - name: con-13x13x17a
-    scenario_key: env.scenario.name
-    scenario_value: Connector-v2
-    scenario_file_name: con-13x13x17a
-    eval_metric: "episode_return"
-    implicit_agent_id: False
-    log_win_rate: True
-    aggregate_rewards: False
-    task_kwargs: {}
-
-  - name: con-14x14x21a
-    scenario_key: env.scenario.name
-    scenario_value: Connector-v2
-    scenario_file_name: con-14x14x21a
-    eval_metric: "episode_return"
-    implicit_agent_id: False
-    log_win_rate: True
-    aggregate_rewards: False
-    task_kwargs: {}
-
-  - name: con-15x15x23a
-    scenario_key: env.scenario.name
-    scenario_value: Connector-v2
-    scenario_file_name: con-15x15x23a
-    eval_metric: "episode_return"
-    implicit_agent_id: False
-    log_win_rate: True
-    aggregate_rewards: False
-    task_kwargs: {}
+    task_kwargs: 
+      time_limit: 500 
 
 envs_name:
-  - name: VectorConnector
-  - name: VectorConnector
-  - name: VectorConnector
-  - name: VectorConnector
-  - name: VectorConnector
-  - name: VectorConnector
-  - name: VectorConnector
-  - name: VectorConnector
-  - name: VectorConnector
+  - name: RobotWarehouse
+  - name: RobotWarehouse
+  - name: RobotWarehouse
+  - name: RobotWarehouse
+  - name: RobotWarehouse
