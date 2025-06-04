@@ -19,7 +19,7 @@ tasks:
     scenario_file_name: tiny-4ag
     eval_metric: "episode_return" 
     implicit_agent_id: False 
-    log_win_rate: True 
+    log_win_rate: False 
     task_kwargs: 
       time_limit: 500  
 
@@ -29,7 +29,7 @@ tasks:
     scenario_file_name: small-4ag
     eval_metric: "episode_return"
     implicit_agent_id: False
-    log_win_rate: True
+    log_win_rate: False
     task_kwargs: 
       time_limit: 500 
 
@@ -39,7 +39,7 @@ tasks:
     scenario_file_name: medium-4ag
     eval_metric: "episode_return"
     implicit_agent_id: False
-    log_win_rate: True
+    log_win_rate: False
     task_kwargs: 
       time_limit: 500 
 
@@ -49,7 +49,7 @@ tasks:
     scenario_file_name: large-4ag
     eval_metric: "episode_return"
     implicit_agent_id: False
-    log_win_rate: True
+    log_win_rate: False
     task_kwargs: 
       time_limit: 500 
 
@@ -59,7 +59,7 @@ tasks:
     scenario_file_name: xlarge-4ag 
     eval_metric: "episode_return"
     implicit_agent_id: False
-    log_win_rate: True
+    log_win_rate: False
     task_kwargs: 
       time_limit: 500 
 
