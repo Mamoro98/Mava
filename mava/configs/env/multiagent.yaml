@@ -1,115 +1,81 @@
 defaults:
   - _self_
 
-scenario_config_path: mava/configs/env/scenario/added_scenarios
+scenario_config_path: mava/configs/env/scenario
 
 scenario:
   name: "placeholder"
   task_config: {}
-  max_grid_dimension: 15
-  max_n_agents: 23
+  # max_grid_dimension: 10
+  # max_n_agents: 10
 
 default_task_kwargs:
     {}
 
 tasks:
-  # - name: con-5x5x3a
-  #   scenario_key: env.scenario.name
-  #   scenario_value: Connector-v2
-  #   scenario_file_name: con-5x5x3a
-  #   eval_metric: "episode_return" 
-  #   implicit_agent_id: False 
-  #   log_win_rate: True 
-  #   aggregate_rewards: False 
-  #   task_kwargs: {} 
-
-  # - name: con-7x7x5a
-  #   scenario_key: env.scenario.name
-  #   scenario_value: Connector-v2
-  #   scenario_file_name: con-7x7x5a
-  #   eval_metric: "episode_return"
-  #   implicit_agent_id: False
-  #   log_win_rate: True
-  #   aggregate_rewards: False
-  #   task_kwargs: {}
-
-  # - name: con-8x8x7a
-  #   scenario_key: env.scenario.name
-  #   scenario_value: Connector-v2
-  #   scenario_file_name: con-8x8x7a
-  #   eval_metric: "episode_return"
-  #   implicit_agent_id: False
-  #   log_win_rate: True
-  #   aggregate_rewards: False
-  #   task_kwargs: {}
-
-  # - name: con-10x10x10a
-  #   scenario_key: env.scenario.name
-  #   scenario_value: Connector-v2
-  #   scenario_file_name: con-10x10x10a
-  #   eval_metric: "episode_return"
-  #   implicit_agent_id: False
-  #   log_win_rate: True
-  #   aggregate_rewards: False
-  #   task_kwargs: {}
-
-  # - name: con-11x11x13a
-  #   scenario_key: env.scenario.name
-  #   scenario_value: Connector-v2
-  #   scenario_file_name: con-11x11x13a
-  #   eval_metric: "episode_return"
-  #   implicit_agent_id: False
-  #   log_win_rate: True
-  #   aggregate_rewards: False
-  #   task_kwargs: {}
-
-  # - name: con-12x12x15a
-  #   scenario_key: env.scenario.name
-  #   scenario_value: Connector-v2
-  #   scenario_file_name: con-12x12x15a
-  #   eval_metric: "episode_return"
-  #   implicit_agent_id: False
-  #   log_win_rate: True
-  #   aggregate_rewards: False
-  #   task_kwargs: {}
-
-  # - name: con-13x13x17a
-  #   scenario_key: env.scenario.name
-  #   scenario_value: Connector-v2
-  #   scenario_file_name: con-13x13x17a
-  #   eval_metric: "episode_return"
-  #   implicit_agent_id: False
-  #   log_win_rate: True
-  #   aggregate_rewards: False
-  #   task_kwargs: {}
-
-  # - name: con-14x14x21a
-  #   scenario_key: env.scenario.name
-  #   scenario_value: Connector-v2
-  #   scenario_file_name: con-14x14x21a
-  #   eval_metric: "episode_return"
-  #   implicit_agent_id: False
-  #   log_win_rate: True
-  #   aggregate_rewards: False
-  #   task_kwargs: {}
-
-  - name: con-15x15x23a
+  - name: smacv2_5_units
     scenario_key: env.scenario.name
-    scenario_value: Connector-v2
-    scenario_file_name: con-15x15x23a
-    eval_metric: "episode_return"
+    scenario_value: Smax
+    scenario_file_name: smacv2_5_units
+    eval_metric: win_rate 
+    implicit_agent_id: False 
+    log_win_rate: True 
+    task_kwargs:
+      see_enemy_actions: True
+      walls_cause_death: True
+      attack_mode: "closest"
+
+  - name: smacv2_10_units
+    scenario_key: env.scenario.name
+    scenario_value: Smax
+    scenario_file_name: smacv2_10_units
+    eval_metric: win_rate
     implicit_agent_id: False
     log_win_rate: True
-    aggregate_rewards: False
-    task_kwargs: {}
+    task_kwargs:
+      see_enemy_actions: True
+      walls_cause_death: True
+      attack_mode: "closest"
+
+  - name: smacv2_20_units
+    scenario_key: env.scenario.name
+    scenario_value: Smax
+    scenario_file_name: smacv2_20_units
+    eval_metric: win_rate
+    implicit_agent_id: False
+    log_win_rate: True
+    task_kwargs:
+      see_enemy_actions: True
+      walls_cause_death: True
+      attack_mode: "closest"
+
+  - name: 5m_vs_6m
+    scenario_key: env.scenario.name
+    scenario_value: Smax
+    scenario_file_name: 5m_vs_6m
+    eval_metric: win_rate
+    implicit_agent_id: False
+    log_win_rate: True
+    task_kwargs:
+      see_enemy_actions: True
+      walls_cause_death: True
+      attack_mode: "closest"
+
+  - name: 10m_vs_11m
+    scenario_key: env.scenario.name
+    scenario_value: Smax
+    scenario_file_name: 10m_vs_11m
+    eval_metric: win_rate
+    implicit_agent_id: False
+    log_win_rate: True
+    task_kwargs:
+      see_enemy_actions: True
+      walls_cause_death: True
+      attack_mode: "closest"
 
 envs_name:
-  - name: VectorConnector
-  # - name: VectorConnector
-  # - name: VectorConnector
-  # - name: VectorConnector
-  # - name: VectorConnector
-  # - name: VectorConnector
-  # - name: VectorConnector
-  # - name: VectorConnector
-  # - name: VectorConnector
+  - name: Smax
+  - name: Smax
+  - name: Smax
+  - name: Smax
+  - name: Smax
