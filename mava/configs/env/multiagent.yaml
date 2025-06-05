@@ -6,23 +6,13 @@ scenario_config_path: mava/configs/env/scenario
 scenario:
   name: "placeholder"
   task_config: {}
-  # max_grid_dimension: 10 
-  # max_n_agents: 10 
+  max_grid_dimension: 10 
+  max_n_agents: 10 
 
 default_task_kwargs:
     {}
 
 tasks:
-  - name: tiny-4ag
-    scenario_key: env.scenario.name
-    scenario_value: RobotWarehouse-v0
-    scenario_file_name: tiny-4ag
-    eval_metric: "episode_return" 
-    implicit_agent_id: False 
-    log_win_rate: False 
-    task_kwargs: 
-      time_limit: 500  
-
   - name: small-4ag
     scenario_key: env.scenario.name
     scenario_value: RobotWarehouse-v0
@@ -33,39 +23,32 @@ tasks:
     task_kwargs: 
       time_limit: 500 
 
-  - name: medium-4ag
+  - name: smacv2_10_units
     scenario_key: env.scenario.name
-    scenario_value: RobotWarehouse-v0
-    scenario_file_name: medium-4ag
-    eval_metric: "episode_return"
+    scenario_value: Smax
+    scenario_file_name: smacv2_10_units
+    eval_metric: win_rate
     implicit_agent_id: False
-    log_win_rate: False
-    task_kwargs: 
-      time_limit: 500 
+    log_win_rate: TrueAdd commentMore actions
+    task_kwargs:
+      see_enemy_actions: True
+      walls_cause_death: True
+      attack_mode: "closest"
 
-  - name: large-4ag
-    scenario_key: env.scenario.name
-    scenario_value: RobotWarehouse-v0
-    scenario_file_name: large-4ag
-    eval_metric: "episode_return"
-    implicit_agent_id: False
-    log_win_rate: False
-    task_kwargs: 
-      time_limit: 500 
 
-  - name: xlarge-4ag
+  - name: con-10x10x10a
     scenario_key: env.scenario.name
-    scenario_value: RobotWarehouse-v0
-    scenario_file_name: xlarge-4ag 
+    scenario_value: Connector-v2
+    scenario_file_name: con-10x10x10a
     eval_metric: "episode_return"
     implicit_agent_id: False
-    log_win_rate: False
-    task_kwargs: 
-      time_limit: 500 
+    log_win_rate: True
+    aggregate_rewards: False
+    task_kwargs: {}
+
+
 
 envs_name:
   - name: RobotWarehouse
-  - name: RobotWarehouse
-  - name: RobotWarehouse
-  - name: RobotWarehouse
-  - name: RobotWarehouse
+  - name: Smax
+  - name: VectorConnector
