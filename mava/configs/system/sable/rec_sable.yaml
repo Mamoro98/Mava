@@ -9,7 +9,7 @@ seed: 40
 add_agent_id: True
 
 # --- RL hyperparameters ---
-actor_lr: 0.00025 # Learning rate for Sable network.
+actor_lr: 0.001 # Learning rate for Sable network.
 update_batch_size: 2 # Number of vectorised gradient updates per device.
 rollout_length: 128 # Number of environment steps per vectorised environment.
 ppo_epochs: 10 # Number of ppo epochs per training data batch.
