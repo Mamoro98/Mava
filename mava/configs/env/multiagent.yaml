@@ -6,8 +6,8 @@ scenario_config_path: mava/configs/env/scenario/added_scenarios
 scenario:
   name: "placeholder"
   task_config: {}
-  max_grid_dimension: 10
-  max_n_agents: 10
+  max_grid_dimension: 14
+  max_n_agents: 21
 
 default_task_kwargs:
     {}
