@@ -6,8 +6,8 @@ scenario_config_path: mava/configs/env/scenario/added_scenarios
 scenario:
   name: "placeholder"
   task_config: {}
-  max_grid_dimension: 12
-  max_n_agents: 15
+  max_grid_dimension: 11
+  max_n_agents: 13
 
 default_task_kwargs:
     {}
@@ -53,25 +53,25 @@ tasks:
   #   aggregate_rewards: False
   #   task_kwargs: {}
 
-  # - name: con-11x11x13a
-  #   scenario_key: env.scenario.name
-  #   scenario_value: Connector-v2
-  #   scenario_file_name: con-11x11x13a
-  #   eval_metric: "episode_return"
-  #   implicit_agent_id: False
-  #   log_win_rate: True
-  #   aggregate_rewards: False
-  #   task_kwargs: {}
-
-  - name: con-12x12x15a
+  - name: con-11x11x13a
     scenario_key: env.scenario.name
     scenario_value: Connector-v2
-    scenario_file_name: con-12x12x15a
+    scenario_file_name: con-11x11x13a
     eval_metric: "episode_return"
     implicit_agent_id: False
     log_win_rate: True
     aggregate_rewards: False
     task_kwargs: {}
+
+  # - name: con-12x12x15a
+  #   scenario_key: env.scenario.name
+  #   scenario_value: Connector-v2
+  #   scenario_file_name: con-12x12x15a
+  #   eval_metric: "episode_return"
+  #   implicit_agent_id: False
+  #   log_win_rate: True
+  #   aggregate_rewards: False
+  #   task_kwargs: {}
 
   # - name: con-13x13x17a
   #   scenario_key: env.scenario.name
