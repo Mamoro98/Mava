@@ -49,6 +49,6 @@ tasks:
 
 
 envs_name:
-  - name: RobotWarehouse
-  # - name: Smax
+  # - name: RobotWarehouse
+  - name: Smax
   # - name: VectorConnector
