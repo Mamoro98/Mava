@@ -6,8 +6,8 @@ scenario_config_path: mava/configs/env/scenario
 scenario:
   name: "placeholder"
   task_config: {}
-  max_grid_dimension: 10 
-  max_n_agents: 10 
+  # max_grid_dimension: 10 
+  # max_n_agents: 10 
 
 default_task_kwargs:
     {}
@@ -23,32 +23,32 @@ tasks:
     task_kwargs: 
       time_limit: 500 
 
-  - name: smacv2_10_units
-    scenario_key: env.scenario.name
-    scenario_value: Smax
-    scenario_file_name: smacv2_10_units
-    eval_metric: win_rate
-    implicit_agent_id: False
-    log_win_rate: TrueAdd commentMore actions
-    task_kwargs:
-      see_enemy_actions: True
-      walls_cause_death: True
-      attack_mode: "closest"
+  # - name: smacv2_10_units
+  #   scenario_key: env.scenario.name
+  #   scenario_value: Smax
+  #   scenario_file_name: smacv2_10_units
+  #   eval_metric: win_rate
+  #   implicit_agent_id: False
+  #   log_win_rate: TrueAdd commentMore actions
+  #   task_kwargs:
+  #     see_enemy_actions: True
+  #     walls_cause_death: True
+  #     attack_mode: "closest"
 
 
-  - name: con-10x10x10a
-    scenario_key: env.scenario.name
-    scenario_value: Connector-v2
-    scenario_file_name: con-10x10x10a
-    eval_metric: "episode_return"
-    implicit_agent_id: False
-    log_win_rate: True
-    aggregate_rewards: False
-    task_kwargs: {}
+  # - name: con-10x10x10a
+  #   scenario_key: env.scenario.name
+  #   scenario_value: Connector-v2
+  #   scenario_file_name: con-10x10x10a
+  #   eval_metric: "episode_return"
+  #   implicit_agent_id: False
+  #   log_win_rate: True
+  #   aggregate_rewards: False
+  #   task_kwargs: {}
 
 
 
 envs_name:
   - name: RobotWarehouse
-  - name: Smax
-  - name: VectorConnector
+  # - name: Smax
+  # - name: VectorConnector
