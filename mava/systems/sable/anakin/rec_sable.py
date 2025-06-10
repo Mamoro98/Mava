@@ -90,7 +90,7 @@ def get_learner_fn(
         """
 
         def _env_step(
-            learner_state: LearnerState,task_id:int, _: Any
+            learner_state: LearnerState,task_id:int,env: MarlEnv, _: Any
         ) -> Tuple[LearnerState, Tuple[Transition, Metrics]]:
             """Step the environment."""
             params, opt_states, key, env_state, last_timestep, hstates = learner_state
@@ -163,6 +163,8 @@ def get_learner_fn(
         #     return list(jnp.split(x, x.shape[0], axis=0))
 
         params, opt_states, key, env_state_old, last_timestep_old, hstates_old = learner_state
+        prev_hstates_list = tree.map(lambda x: jnp.copy(x), learner_state.hstates)
+
         # env_state_old = tree.map(split_first_axis, env_state_old)
         # last_timestep_old = tree.map(split_first_axis, last_timestep_old)
         # hstates_old = tree.map(split_first_axis, hstates_old)
@@ -188,7 +190,7 @@ def get_learner_fn(
             env = envs[i]
 
             def _env_step_for_task_i(carry, dummy):
-                return _env_step(carry, i, dummy)
+                return _env_step(carry, i,env ,dummy)
 
             new_learner_state, (traj_batch, episode_metrics) = jax.lax.scan(
                 f=_env_step_for_task_i,
@@ -205,7 +207,7 @@ def get_learner_fn(
             # ) 
 
             # Calculate advantage
-            params_new, opt_states_new, key, env_state_new, last_timestep_new, updated_hstates_new = new_learner_state
+            params_new, opt_states_new, key, env_state_new, last_timestep_new, updated_hstates = new_learner_state
             env_states_list.append(env_state_new)
             timesteps_list.append(last_timestep_new)
             
@@ -253,7 +255,7 @@ def get_learner_fn(
                 padded_last_agents_view,    
                 padded_mask,  
                 original_last_step_count,   
-                updated_hstates_new,        
+                updated_hstates,        
                 last_val_key,               
                 task_id=i                   
             )
@@ -301,7 +303,7 @@ def get_learner_fn(
             advantages_list.append(advantages)
             targets_list.append(targets)
             traj_batches_list.append(traj_batch)
-            updated_hstates_list.append(updated_hstates_new)
+            updated_hstates_list.append(updated_hstates)
             # num_tasks = learner_state.env_state.shape[0]
 
         def _update_epoch(update_state: Tuple, _: Any) -> Tuple:
@@ -497,49 +499,95 @@ def get_learner_fn(
 
     
 
-            losses = []
-            for i in range(len(minibatches_list)):
-                batch_info = (*minibatches_list[i], prev_hs_minibatch_list[i])
-                # (params, opt_states, entropy_key), loss_info =_update_minibatch((params, opt_states, key), batch_info)
 
-                def _update_minibatch_for_task_i(carry, dummy):
-                                return _update_minibatch(carry, dummy,task_id=i)
+            N_minibatches = config.system.num_minibatches
+            N_tasks = len(minibatches_list)
+
+            epoch_total_loss_sum = { "total_loss": 0.0, "value_loss": 0.0, "actor_loss": 0.0, "entropy": 0.0 }
+            epoch_loss_count = 0
+
+            for i in range(N_minibatches):
+                for j in range(N_tasks):
+                        traj_data_all_mbs_for_task, adv_data_all_mbs_for_task, targets_data_all_mbs_for_task = minibatches_list[j]
+       
+                        
+                        current_traj_data_mb = tree.map(
+                            lambda leaf_all_mbs: leaf_all_mbs[i],
+                            traj_data_all_mbs_for_task
+                        )
+                        current_adv_data_mb = adv_data_all_mbs_for_task[i]
+                        current_targets_data_mb = targets_data_all_mbs_for_task[i]
+                        
+                        
+                        hs_data_all_mbs_for_task = prev_hs_minibatch_list[j]
+                        current_hs_data_mb = tree.map(
+                            lambda leaf_all_mbs: leaf_all_mbs[i],
+                            hs_data_all_mbs_for_task
+                        )
+                        
+                        batch_info_single_mb_task = (current_traj_data_mb, current_adv_data_mb, current_targets_data_mb, current_hs_data_mb)
+
+                                   
+                        (params, opt_states, entropy_key), loss_info_one_task_one_mb = _update_minibatch(
+                            (params, opt_states, entropy_key), 
+                            batch_info_single_mb_task,
+                            task_id=j 
+                        )             
+
+                        
+                        for k_loss, v_loss in loss_info_one_task_one_mb.items():
+                            epoch_total_loss_sum[k_loss] += v_loss
+                        epoch_loss_count += 1 
+
+            final_epoch_avg_loss = {k: v / epoch_loss_count for k, v in epoch_total_loss_sum.items() if epoch_loss_count > 0}
+
+            update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hstates)
+            return update_state, final_epoch_avg_loss
+
+
+            # losses = []
+            # for i in range(len(minibatches_list)):
+            #     batch_info = (*minibatches_list[i], prev_hs_minibatch_list[i])
+            #     # (params, opt_states, entropy_key), loss_info =_update_minibatch((params, opt_states, key), batch_info)
+
+            #     def _update_minibatch_for_task_i(carry, dummy):
+            #                 return _update_minibatch(carry, dummy,task_id=i)
                 
-                (params, opt_states, entropy_key), loss_info = jax.lax.scan(
-                    _update_minibatch_for_task_i,
-                    (params, opt_states, entropy_key),
-                    batch_info,
-                )
-                losses.append(loss_info)
+            #     (params, opt_states, entropy_key), loss_info = jax.lax.scan(
+            #         _update_minibatch_for_task_i,
+            #         (params, opt_states, entropy_key),
+            #         batch_info,
+            #     )
+            #     losses.append(loss_info)
 
-            # take the mean over the task dimensions of the loss info
-            print(f'losses {type(losses)}')
-            total_losses = {}
-            # total_losses = {
-            #     k: sum(loss[k] for loss in losses) / len(losses)
-            #     for k in losses[0].keys()
-            #     }
-            for i in range(len(losses)):
-                for j in losses[i].keys():
-                    if j not in total_losses.keys():
-                        total_losses[j] = 0
-                    total_losses[j] = total_losses[j] + losses[i][j]
-            for i in total_losses.keys():
-                total_losses[i] = total_losses[i] / len(losses)
+            # # take the mean over the task dimensions of the loss info
+            # print(f'losses {type(losses)}')
+            # total_losses = {}
+            # # total_losses = {
+            # #     k: sum(loss[k] for loss in losses) / len(losses)
+            # #     for k in losses[0].keys()
+            # #     }
+            # for i in range(len(losses)):
+            #     for j in losses[i].keys():
+            #         if j not in total_losses.keys():
+            #             total_losses[j] = 0
+            #         total_losses[j] = total_losses[j] + losses[i][j]
+            # for i in total_losses.keys():
+            #     total_losses[i] = total_losses[i] / len(losses)
 
 
 
-            update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hstates_list)
-            return update_state, total_losses
+            # update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hstates_list)
+            # return update_state, total_losses
         
-        update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, updated_hstates_list)
+        update_state = (params, opt_states, traj_batches_list, advantages_list, targets_list, key, prev_hstates_list)
 
         # Update epochs
         update_state, loss_info = jax.lax.scan(
             _update_epoch, update_state, None, config.system.ppo_epochs
         )
 
-        params, opt_states, traj_batches_list, advantages_list, targets_list, key, updated_hstates_list = update_state
+        params, opt_states, traj_batches_list, advantages_list, targets_list, key, _ = update_state
         learner_state = LearnerState(
             params,
             opt_states,
@@ -598,14 +646,11 @@ def learner_setup(
     key, net_key = keys
     
     # get the action dims and action space type of each task -> used in sable network 
-    task_action_dims = []
     task_action_space_types = []
     for i, env_task in enumerate(envs):
 
-        task_act_dim = env_task.action_dim
         _, task_act_type = get_action_head(env_task.action_spec)
 
-        task_action_dims.append(task_act_dim)
         task_action_space_types.append(task_act_type)
     # i created a list of the chunk sizes in the root config
     # this list will be populated with the num_agents for each task multiplied by the rollout length 
@@ -687,7 +732,6 @@ def learner_setup(
     for i, env_task in enumerate(envs):
         init_obs_unpadded = env_task.observation_spec.generate_value()
         
-        # TODO review this function
         def pad_init_obs_leaf(leaf_array):
             
             if leaf_array.ndim == 2: 
@@ -810,9 +854,9 @@ def learner_setup(
         # get initial hidden state
         init_hstates = get_init_hidden_state(config.network.net_config, config.arch.num_envs)
 
-        key, step_keys = jax.random.split(key)
         joint_hstates.append(init_hstates)
 
+    key, step_keys = jax.random.split(key)
     # replicate params and opt state through devices
     replicate_learner = (params, opt_state, step_keys)
     # Duplicate learner for update_batch_size.  
