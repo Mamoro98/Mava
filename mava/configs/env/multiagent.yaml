@@ -75,7 +75,7 @@ tasks:
 
 envs_name:
   - name: Smax
-  # - name: Smax
+  - name: Smax
   # - name: Smax
   # - name: Smax
   # - name: Smax
