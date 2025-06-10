@@ -1019,9 +1019,43 @@ def run_experiment(_config: DictConfig) -> float:
             params: Params, timestep: TimeStep, key: chex.PRNGKey, actor_state: ActorState
         ) -> Tuple[Action, Dict]:
             hidden_state = actor_state[_hidden_state]
+
+            last_obs_pytree = timestep.observation 
+            max_obs_f_dim = config.system.max_obs_feature_dim  
+
+
+
+            def _pad_obs_leaf_for_rollout(leaf_arr):
+                
+                if leaf_arr.ndim >= 1: 
+                    
+                    num_dims_to_keep = leaf_arr.ndim - 1
+                    current_feat_dim = leaf_arr.shape[-1]
+                    if current_feat_dim < max_obs_f_dim:
+                        pad_width = [(0,0)] * num_dims_to_keep + [(0, max_obs_f_dim - current_feat_dim)]
+                        return jnp.pad(leaf_arr, pad_width)
+                return leaf_arr
+            def pad_mask_leaf(mask_array: jnp.ndarray) -> jnp.ndarray:
+                if hasattr(mask_array, "ndim") and mask_array.ndim >= 1:
+                    curr = mask_array.shape[-1]
+                    target = config.system.max_action_dim
+                    if curr < target:
+                        pad_width = [(0,0)] * (mask_array.ndim - 1) + [(0, target - curr)]
+                        # jnp.pad defaults to 0 => False for bool masks
+                        return jnp.pad(mask_array, pad_width)
+                return mask_array
+            
+
+            padded_mask = tree.map(pad_mask_leaf, last_obs_pytree.action_mask)
+            
+            padded_agents_view = tree.map(_pad_obs_leaf_for_rollout, last_obs_pytree.agents_view)
+
+
             output_action, _, _, hidden_state = actor_apply_fn(  # type: ignore
                 params,
-                timestep.observation,
+                padded_agents_view,
+                padded_mask,
+                last_obs_pytree.step_count,
                 hidden_state,
                 key,
                 task_id = task_id
