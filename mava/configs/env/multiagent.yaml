@@ -25,17 +25,17 @@ tasks:
       walls_cause_death: True
       attack_mode: "closest"
 
-  # - name: smacv2_10_units
-  #   scenario_key: env.scenario.name
-  #   scenario_value: Smax
-  #   scenario_file_name: smacv2_10_units
-  #   eval_metric: win_rate
-  #   implicit_agent_id: False
-  #   log_win_rate: True
-  #   task_kwargs:
-  #     see_enemy_actions: True
-  #     walls_cause_death: True
-  #     attack_mode: "closest"
+  - name: smacv2_10_units
+    scenario_key: env.scenario.name
+    scenario_value: Smax
+    scenario_file_name: smacv2_10_units
+    eval_metric: win_rate
+    implicit_agent_id: False
+    log_win_rate: True
+    task_kwargs:
+      see_enemy_actions: True
+      walls_cause_death: True
+      attack_mode: "closest"
 
   # - name: smacv2_20_units
   #   scenario_key: env.scenario.name
